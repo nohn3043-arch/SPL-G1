@@ -17,34 +17,34 @@
 
 ```
 SPL-G1-General-purpose-processor/
-├── EDA_fixed.py            # 内核：因果算子类型 / CausalIR / 参数消费 / PDK 加载 (v0.4.0)
-├── eda_parser.py           # 因果描述 JSON → CausalIR 解析器
-├── eda_mapper.py           # 工艺映射器（含 params 亲和度打破平局）
-├── eda_exporter.py         # 网表 JSON + 报告输出（含参数警告）
-├── eda_cli.py              # 命令行入口
-├── pdk/                    # 工艺库
-│   ├── optical_mzi_photonics_v1.json   # 光子 MZI 工艺（6 算子含 COMPUTE）
-│   └── silicon_cim_v1.json             # 硅基 CIM 28nm 工艺（6 算子含 COMPUTE）
-├── examples/               # 因果描述样例
-│   ├── causal_chain_demo.json          # 全 5 算子链式演示
-│   ├── cognitive_audit_demo.json       # 认知审计红线硬拦截用例
-│   └── full_pipeline_demo.json         # 完整流水线（含 COMPUTE + params 消费）
-├── rtl/                    # 硬件层（SystemVerilog v0.2.0）
-│   ├── g1_compute_core.sv              # 计算处理核心（含 5 种因果计算模式）
-│   ├── G1_Top_Interface.v              # G1 顶层接口（计算→审计管线 + 64-cycle 身份锚）
-│   ├── spl_cim_causal_unit.sv          # 因果检查单元（8-entry forbidden matrix）
-│   └── tb_G1_Top.sv                    # 顶层测试平台（4 个 pass/fail 场景）
-├── docs/                   # 规范文档
-│   ├── SPL-EDA 说明书.pdf
-│   └── SPL-G1 Alignment Matrix.pdf    # 材料 / 编译器 / 芯片 三层因果对齐证明
-├── outputs/                # 生成的网表
+├── EDA_fixed.py            # Kernel: causal operator types / CausalIR / parameter consumption / PDK loading (v0.4.0)
+├── eda_parser.py           # Causal description JSON → CausalIR parser
+├── eda_mapper.py           # Technology mapper (with params affinity tie-breaking)
+├── eda_exporter.py         # Netlist JSON + report output (with parameter warnings)
+├── eda_cli.py              # CLI entry point
+├── pdk/                    # PDK library
+│   ├── optical_mzi_photonics_v1.json   # Optical MZI process (6 opcodes incl. COMPUTE)
+│   └── silicon_cim_v1.json             # Silicon CIM 28nm process (6 opcodes incl. COMPUTE)
+├── examples/               # Causal description examples
+│   ├── causal_chain_demo.json          # Full 5-opcode chain demonstration
+│   ├── cognitive_audit_demo.json       # Cognitive audit red-line hard-block use case
+│   └── full_pipeline_demo.json         # Full pipeline (with COMPUTE + params consumption)
+├── rtl/                    # Hardware layer (SystemVerilog v0.2.0)
+│   ├── g1_compute_core.sv              # Compute processing core (5 causal compute modes)
+│   ├── G1_Top_Interface.v              # G1 top-level interface (compute→audit pipeline + 64-cycle identity anchor)
+│   ├── spl_cim_causal_unit.sv          # Causal check unit (8-entry forbidden matrix)
+│   └── tb_G1_Top.sv                    # Top-level testbench (4 pass/fail scenarios)
+├── docs/                   # Specification documents
+│   ├── SPL-EDA 说明书.pdf              # SPL-EDA Manual
+│   └── SPL-G1 Alignment Matrix.pdf    # Material / compiler / chip three-layer causal alignment proof
+├── outputs/                # Generated netlists
 ├── README.md
-├── Materica-specification  # 跨材料因果映射规范
-├── SPL-Core.json           # 指令集（11 条，含 COMPUTE）
-└── State_Anchor.pdl        # 状态锚定协议（256-bit 合成身份 + 64-cycle 验证）
+├── Materica-specification  # Cross-material causal mapping specification
+├── SPL-Core.json           # Instruction set (11 opcodes incl. COMPUTE)
+└── State_Anchor.pdl        # State anchor protocol (256-bit synthetic identity + 64-cycle verification)
 ```
 
-> 快速开始：`python eda_cli.py --desc examples/full_pipeline_demo.json --pdk pdk/silicon_cim_v1.json --strategy min_power --output outputs/netlist.json`
+> Quick start: `python eda_cli.py --desc examples/full_pipeline_demo.json --pdk pdk/silicon_cim_v1.json --strategy min_power --output outputs/netlist.json`
 
 ---
 
