@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 560" preserveAspectRatio="xMidYMid meet" role="img" aria-label="overview">
+  <rect width="880" height="560" fill="#FAFAFA"/>
+<text x="440" y="56" text-anchor="middle" font-family="Helvetica Neue, Arial, sans-serif" font-size="30" font-weight="600" fill="#2C2C2C" letter-spacing="1">Unified Compute Fabric</text>
+<line x1="360" y1="78" x2="520" y2="78" stroke="#D4AF37" stroke-width="2"/>
+<rect x="28" y="110" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="62" cy="148" r="9" fill="#D4AF37"/>
+<text x="82" y="154" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">CPU</text>
+<text x="48" y="226" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">通用控制与编排核心</text>
+<rect x="308" y="110" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="342" cy="148" r="9" fill="#D4AF37"/>
+<text x="362" y="154" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">GPU</text>
+<text x="328" y="226" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">大规模并行张量计算</text>
+<rect x="588" y="110" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="622" cy="148" r="9" fill="#D4AF37"/>
+<text x="642" y="154" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">NPU</text>
+<text x="608" y="226" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">低功耗推理加速引擎</text>
+<rect x="28" y="306" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="62" cy="344" r="9" fill="#D4AF37"/>
+<text x="82" y="350" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">PMEM</text>
+<text x="48" y="422" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">持久内存一致存储</text>
+<rect x="308" y="306" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="342" cy="344" r="9" fill="#D4AF37"/>
+<text x="362" y="350" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">RA-BUS</text>
+<text x="328" y="422" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">统一因果审计互联</text>
+<rect x="588" y="306" width="256" height="168" rx="14" fill="#FFFFFF" stroke="#C9A96E" stroke-width="1.5"/>
+<circle cx="622" cy="344" r="9" fill="#D4AF37"/>
+<text x="642" y="350" font-family="Helvetica Neue, Arial, sans-serif" font-size="19" font-weight="600" fill="#2C2C2C">Audit</text>
+<text x="608" y="422" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#8B8B8B">端到端因果可观测</text>
+
+</svg>

@@ -1,135 +1,45 @@
 <p align="center">
-  <em>Only trustworthy computation has a future.</em>
+  <img src="assets/banner.svg" alt="SPL-G1 banner" style="width:100%">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/architecture-4--in--1_unified-D4AF37?style=flat-square" alt="arch">
-  <img src="https://img.shields.io/badge/rtl-v0.2.0-2C2C2C?style=flat-square" alt="rtl">
-  <img src="https://img.shields.io/badge/pdk-silicon_|_photonics-2C2C2C?style=flat-square" alt="pdk">
-  <img src="https://img.shields.io/badge/patent-PCT%2FCN2026%2F094913-2C2C2C?style=flat-square" alt="patent">
+  ![hardware](https://img.shields.io/badge/hardware-D4AF37?style=flat-square)  ![cpu-gpu-npu](https://img.shields.io/badge/cpu-gpu-npu-D4AF37?style=flat-square)  ![causal-audit](https://img.shields.io/badge/causal-audit-D4AF37?style=flat-square)
 </p>
 
----
+<blockquote align="center">
+  <em>General-Purpose Processor · 4-in-1 Causal Audit Pipeline</em>
+</blockquote>
 
-&nbsp;
+<div style="max-width:880px;margin:0 auto;padding:0 16px">
 
-## ✦ SPL-G1 — Second-Perspective Logic Universal Core
+## ✦ About
 
-An experimental general-purpose heterogeneous processor architecture built around **SPL-Core** execution paradigm. A true **4-in-1 unified compute fabric:**
+<p style="font-size:15px;line-height:1.8;color:#2C2C2C">SPL-G1 是四合一硬件因果审计管线，统一调度 CPU、GPU、NPU 与持久内存，对计算全过程进行因果级可观测审计。它以 RA-BUS 为核心互联，将异构算力收敛为单一可验证的执行平面，为合规计算与可信 AI 推理提供硬件基石。</p>
 
-> **CPU** scalar · **GPU** parallel · **NPU** inference · **Persistent Memory** in-fabric
+<p align="center">
+  <img src="assets/overview.svg" alt="SPL-G1 overview" style="width:100%">
+</p>
 
-&nbsp;
+</div>
 
-## ✦ Architecture
-
-```mermaid
-graph TD
-    subgraph "SPL-G1 Compute Fabric"
-        direction TB
-
-        IF(("Instruction<br/>Fetch")):::cpu
-        SIMD(("SIMD<br/>Parallelism")):::gpu
-        TENSOR(("Tensor<br/>Inference")):::npu
-        PMEM(("Persistent<br/>Memory")):::mem
-
-        subgraph "Causal Audit Pipeline"
-            NS(("Narrative<br/>Strip")):::pipe
-            IAP(("Assumption<br/>Detection")):::pipe
-            RA(("Responsibility<br/>Anchoring")):::pipe
-            VH(("Vulnerability<br/>Hedging")):::pipe
-        end
-
-        RA_BUS[("RA-BUS<br/>Causality Spine")]:::bus
-    end
-
-    IF --> RA_BUS
-    SIMD --> RA_BUS
-    TENSOR --> RA_BUS
-    PMEM --> RA_BUS
-    RA_BUS --> NS --> IAP --> RA --> VH
-
-    classDef cpu fill:#FAFAFA,stroke:#D4AF37,stroke-width:1px,color:#2C2C2C
-    classDef gpu fill:#FAFAFA,stroke:#D4AF37,stroke-width:1px,color:#2C2C2C
-    classDef npu fill:#FAFAFA,stroke:#D4AF37,stroke-width:1px,color:#2C2C2C
-    classDef mem fill:#FAFAFA,stroke:#D4AF37,stroke-width:1px,color:#2C2C2C
-    classDef pipe fill:#F5F0E6,stroke:#C9A96E,stroke-width:1px,color:#2C2C2C
-    classDef bus fill:#FAFAFA,stroke:#C9A96E,stroke-width:3px,color:#2C2C2C
-```
-
-&nbsp;
-
-## ✦ Execution Cycle
-
-```
-ANCHOR  →  EVOLVE  →  AUDIT  →  STRIP
-```
-
-| Phase | Function |
-|-------|----------|
-| **ANCHOR** | Hardware identity seal `0x8525d007_59a4ca22` |
-| **EVOLVE** | SPL-Core instruction execution (11 opcodes incl. COMPUTE) |
-| **AUDIT** | Causal topology verification via RA-BUS |
-| **STRIP** | Narrative noise removal, pure logic outcome |
-
-&nbsp;
-
-## ✦ Cross-Material Adaptation Protocol (CMAP)
-
-The G1 architecture is defined by its **causal topology**, not its silicon substrate:
-
-| Requirement | Mechanism |
-|-------------|-----------|
-| **Binary Stability** (P → Q) | Resistant to stochastic "Narrative Noise" |
-| **Causal Topology** | RA-BUS directional signal conduction |
-| **Proximal Coalescence** | Compute + storage at atomic proximity (ΔE_transport ≈ 0) |
-| **Irreversible Security** | Photonic isolators / molecular SBC barriers |
-
-> **Target Materials:** Carbon Nanotubes · Photonic Crystals · Spintronic Arrays · Synthetic Bio-Logic
-
-&nbsp;
-
-## ✦ Repository Layout
-
-```
-├── EDA_fixed.py              ← Core: CausalIR · PDK loader (v0.4.0)
-├── eda_parser.py             ← Causal description JSON → CausalIR
-├── eda_mapper.py             ← Process mapper (params-aware tiebreaker)
-├── eda_exporter.py           ← Netlist JSON + report export
-├── eda_cli.py                ← CLI entry
-├── pdk/                      ← PDK library
-│   ├── optical_mzi_photonics_v1.json
-│   └── silicon_cim_v1.json
-├── rtl/                      ← Hardware (SystemVerilog v0.2.0)
-│   ├── g1_compute_core.sv
-│   ├── G1_Top_Interface.v
-│   ├── spl_cim_causal_unit.sv
-│   └── tb_G1_Top.sv
-├── SPL-Core.json             ← ISA (11 opcodes)
-└── State_Anchor.pdl          ← 256-bit identity + 64-cycle verification
-```
-
-&nbsp;
+<p align="center">— ✦ —</p>
 
 ## ✦ Quick Start
 
 ```bash
-python eda_cli.py \
-  --desc examples/full_pipeline_demo.json \
-  --pdk pdk/silicon_cim_v1.json \
-  --strategy min_power \
-  --output outputs/netlist.json
+git clone git@github.com:NOHN-AI/SPL-G1-GENERAL-PURPOSE-PROCESSOR.git
+cd SPL-G1-GENERAL-PURPOSE-PROCESSOR
+pip install -r requirements.txt
+python audit_pipeline.py
 ```
 
-&nbsp;
-
----
+<p align="center">— ✦ —</p>
 
 <p align="center">
-  <sub>PCT/CN2026/094913 · Patent Pending</sub>
+  <a href="https://github.com/NOHN-AI">NOHN-AI</a>
+  &nbsp;·&nbsp;
+  <a href="https://www.nohnlins.com/">nohnlins.com</a>
   &nbsp;·&nbsp;
   <a href="mailto:ai@nohnlins.com">ai@nohnlins.com</a>
 </p>
-<p align="center">
-  <sub>© 2026 Shanghai Linming Junhua &amp; NOHN AI Technology · All Rights Reserved</sub>
-</p>
+<p align="center"><sub>NOHN AI · SPL-G1</sub></p>
