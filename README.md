@@ -3,7 +3,9 @@
 </p>
 
 <p align="center">
-  ![hardware](https://img.shields.io/badge/hardware-D4AF37?style=flat-square)  ![cpu-gpu-npu](https://img.shields.io/badge/cpu-gpu-npu-D4AF37?style=flat-square)  ![causal-audit](https://img.shields.io/badge/causal-audit-D4AF37?style=flat-square)
+  <img src="https://img.shields.io/badge/hardware-D4AF37?style=flat-square" alt="hardware">
+  <img src="https://img.shields.io/badge/cpu-gpu-npu-D4AF37?style=flat-square" alt="cpu-gpu-npu">
+  <img src="https://img.shields.io/badge/causal-audit-D4AF37?style=flat-square" alt="causal-audit">
 </p>
 
 <blockquote align="center">
