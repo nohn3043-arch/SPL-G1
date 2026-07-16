@@ -14,7 +14,7 @@
 
 ## ✦ About
 
-<p style="font-size:15px;line-height:1.8;color:#2C2C2C">SPL-G1 是四合一硬件因果审计管线，统一调度 CPU、GPU、NPU 与持久内存，对计算全过程进行因果级可观测审计。它以 RA-BUS 为核心互联，将异构算力收敛为单一可验证的执行平面，为合规计算与可信 AI 推理提供硬件基石。</p>
+<p style="font-size:15px;line-height:1.8;color:#2C2C2C">SPL-G1 is a 4-in-1 hardware causal audit pipeline that unifies CPU, GPU, NPU, and persistent memory under a single execution plane with causal-level observable audit across the entire compute lifecycle. Built around the RA-BUS interconnect, it converges heterogeneous compute into one verifiable execution surface, providing a hardware foundation for compliance computing and trustworthy AI inference.</p>
 
 <p align="center">
   <img src="assets/overview.svg" alt="SPL-G1 overview" style="width:100%">
