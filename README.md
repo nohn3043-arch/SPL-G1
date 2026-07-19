@@ -227,7 +227,7 @@ SPL-G1-General-purpose-processor/
 - 邮箱：[ai@nohnlins.com](mailto:ai@nohnlins.com)
 
 ### 中国地区
-- 邮箱：[ai@tx.nohnlins.com](mailto:ai@tx.nohnlins.com)
+- 邮箱：[lin@secondai.top](mailto:lin@secondai.top)
 
 ---
 
