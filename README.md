@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="SPL-G1 banner" style="width:100%">
+  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/banner.svg?format=raw" alt="SPL-G1 banner" style="width:100%">
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 <p style="font-size:15px;line-height:1.8;color:#2C2C2C">SPL-G1 is a 4-in-1 hardware causal audit pipeline that unifies CPU, GPU, NPU, and persistent memory under a single execution plane with causal-level observable audit across the entire compute lifecycle. Built around the RA-BUS interconnect, it converges heterogeneous compute into one verifiable execution surface, providing a hardware foundation for compliance computing and trustworthy AI inference.</p>
 
 <p align="center">
-  <img src="assets/overview.svg" alt="SPL-G1 overview" style="width:100%">
+  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/overview.svg?format=raw" alt="SPL-G1 overview" style="width:100%">
 </p>
 
 </div>
