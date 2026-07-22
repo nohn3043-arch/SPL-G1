@@ -245,5 +245,5 @@ SPL-G1-General-purpose-processor/
 
 ---
 
-**版权声明**：Copyright © 2026 上海林明峻华科技有限公司 和 NOHN AI TECHNOLOGY PTE. LTD. 版权所有。
+**版权声明**：Copyright © 2026 上海霖铭均华科技有限公司 和 NOHN AI TECHNOLOGY PTE. LTD. 版权所有。
 ```
