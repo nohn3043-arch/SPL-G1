@@ -25,6 +25,7 @@ from EDA_fixed import (
 from eda_parser import parse_causal_description, describe_ir, ParserError
 from eda_mapper import map_causal_ir, MappingStrategy, MappingResult
 from eda_exporter import export_and_report
+from eda_rtlgen import generate_rtl_artifacts, print_rtl_summary
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

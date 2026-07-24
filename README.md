@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/banner.svg?format=raw" alt="SPL-G1 banner" style="width:100%">
+  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/banner.png?format=raw" alt="SPL-G1 banner" style="width:100%">
 </p>
 
 <p align="center">
@@ -31,10 +31,18 @@
 ```bash
 git clone git@github.com:NOHN-AI/SPL-G1-GENERAL-PURPOSE-PROCESSOR.git
 cd SPL-G1-GENERAL-PURPOSE-PROCESSOR
-# Core EDA toolchain is pure Python ≥3.8 — standard library only
-make demo-causal          # causal-chain demo (see Makefile for all targets)
-# or run the CLI directly:
-python eda_cli.py --desc examples/causal_chain_demo.json --pdk pdk/silicon_cim_v1.json --strategy min_delay --output outputs/netlist.json
+
+# Core EDA toolchain — pure Python ≥3.8, stdlib only
+make demo-causal
+
+# EDA → RTL pipeline: causal design → PDK map → Verilog config + Yosys script
+python eda_cli.py --desc examples/causal_chain_demo.json \
+  --pdk pdk/silicon_cim_v1.json --strategy min_delay \
+  --output outputs/netlist.json --rtl --rtl-dir outputs/rtlgen/
+
+# RTL simulation (iverilog 12.0+ required)
+make sim          # run tb_G1_Top (original) + tb_G1_Integrated (full pipeline)
+make wave         # open waveforms in GTKWave
 ```
 
 <p align="center">— ✦ —</p>
@@ -45,12 +53,15 @@ python eda_cli.py --desc examples/causal_chain_demo.json --pdk pdk/silicon_cim_v
 
 - **4-in-1 compute fabric** — CPU / GPU / NPU / persistent memory unified on one execution plane via the **RA-BUS** interconnect.
 - **Hardware causal-audit pipeline** — every compute step carries an observable causal trail across the full lifecycle.
-- **EDA toolchain (pure Python, stdlib-only)** — `eda_cli.py` drives parse → map → build → export:
+- **PIM compute array** — 4×4 storage-in-memory grid with SCALAR / VECTOR / MATRIX execution modes and per-column vec_sum / full-array mat_total aggregation.
+- **RA-BUS arbiter** — 4-target address-decoded bus fabric (PIM / Audit / Identity / Reserved) with READ / WRITE / EXECUTE / CONFIG transaction types.
+- **EDA toolchain (pure Python, stdlib-only)** — `eda_cli.py` drives parse → map → build → export → RTL generate:
   - `eda_parser.py` — reads the causal-design JSON
   - `eda_mapper.py` — maps operators to PDK cells
   - `eda_exporter.py` — emits netlist / reports
+  - `eda_rtlgen.py` — emits `spl_config_pkg.sv` + `tb_stimulus.sv` + `syn_tcl.tcl` from mapping results
   - `EDA_fixed.py` — hardened helper routines
-- **RTL / silicon + photonics** — SystemVerilog compute core (`g1_compute_core.sv`, `spl_cim_causal_unit.sv`), top interface (`G1_Top_Interface.v`), and a testbench (`tb_G1_Top.sv`).
+- **RTL (SystemVerilog)** — `G1_Top_Integrated.sv` (full integrated top), `ra_bus_arbiter.sv`, `spl_pim_compute_array.sv`, `spl_pim_sequencer.sv`, `spl_pim_cell.sv`, `spl_cim_causal_unit.sv`, with integration testbench `tb_G1_Integrated.sv`.
 - **PDK packs** — `silicon_cim_v1.json` (compute-in-memory) and `optical_mzi_photonics_v1.json` (photonic).
 
 </div>
@@ -68,7 +79,7 @@ python eda_cli.py --desc examples/causal_chain_demo.json --pdk pdk/silicon_cim_v
 | `make build DESC=<json>` | Compile a custom causal design |
 | `make sim` / `make wave` | RTL simulation (`iverilog`) + open waveform |
 
-> RTL simulation needs **Icarus Verilog** (`iverilog` / `vvp`) and optionally **GTKWave** for viewing `.vcd` waveforms.
+> RTL simulation needs **Icarus Verilog** (`iverilog` / `vvp`) and optionally **GTKWave** for viewing `.vcd` waveforms. Install: `winget install icarusVerilog` or download from [bleyer.org/icarus](https://bleyer.org/icarus/).
 
 </div>
 
@@ -93,15 +104,27 @@ Strategy options: `min_delay` · `min_power`. Example designs live in `examples/
 
 ```
 SPL-G1-General-purpose-processor/
-├── eda_cli.py / eda_parser.py / eda_mapper.py / eda_exporter.py / EDA_fixed.py
-├── Makefile                       # demo / build / sim targets
-├── rtl/                          # SystemVerilog: g1_compute_core.sv, spl_cim_causal_unit.sv, G1_Top_Interface.v, tb_G1_Top.sv
-├── pdk/                          # silicon_cim_v1.json, optical_mzi_photonics_v1.json
-├── examples/                     # causal / cognitive-audit / full-pipeline demos
-├── outputs/                      # generated netlists
+├── eda_cli.py / eda_parser.py / eda_mapper.py / eda_exporter.py /
+│   eda_rtlgen.py / EDA_fixed.py    # EDA toolchain (pure Python)
+├── Makefile                        # demo / build / sim targets
+├── rtl/
+│   ├── G1_Top_Integrated.sv       # Full integrated top (RA-BUS + PIM + Audit + Identity)
+│   ├── G1_Top_Interface.v        # Original top (legacy)
+│   ├── ra_bus_arbiter.sv          # RA-BUS 4-target arbiter + address decoder
+│   ├── g1_compute_core.sv        # Original compute core
+│   ├── spl_cim_causal_unit.sv    # Causal audit unit
+│   ├── spl_pim_cell.sv           # Single PIM cell: 64-bit store + 8-op ALU
+│   ├── spl_pim_compute_array.sv  # 4×4 PIM array: SCALAR / VECTOR / MATRIX modes
+│   ├── spl_pim_sequencer.sv      # 16-entry micro-op instruction sequencer
+│   ├── tb_G1_Top.sv             # Original top-level testbench (4 tests)
+│   ├── tb_G1_Integrated.sv      # Integration testbench via RA-BUS (5 tests)
+│   └── tb_pim_compute_array.sv   # PIM array standalone testbench (3 tests)
+├── pdk/                           # silicon_cim_v1.json, optical_mzi_photonics_v1.json
+├── examples/                      # causal / cognitive-audit / full-pipeline demos
+├── docs/ra_bus_protocol.md       # RA-BUS protocol specification
+├── outputs/                       # generated netlists / VCD waveforms / RTL artifacts
 ├── SPL-Core.json · State_Anchor.pdl · Materica-specification
-├── docs/                         # SPL-EDA 说明书.pdf, SPL-G1 Alignment Matrix.pdf
-└── assets/                       # banner.svg, overview.svg
+└── spl_g1_phase*.md              # Phase work records
 ```
 
 ## ✦ License & Authorization

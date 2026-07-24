@@ -108,7 +108,7 @@ def generate_report(result: MappingResult) -> str:
     ]
 
     for op in result.ops:
-        status = "✓" if op.selected else "✗"
+        status = "[OK]" if op.selected else "[FAIL]"
         sel = op.selected
         lines.append(
             f"\n  [{op.op_index}] {op.op_type} {status}"
