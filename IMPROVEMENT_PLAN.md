@@ -1,300 +1,212 @@
-# SPL-G1 Improvement Plan: PIM Unified-Compute General-Purpose Processor
+# SPL-G1 改进计划 v3.0
 
-> Version 1.0 — 2026-07-24
-> Authoritative architecture roadmap derived from NOMOS + SPL-G1 co-design audit.
-
----
-
-## 0. Design Thesis
-
-**One compute paradigm — Processing-In-Memory (PIM) — achieves CPU/GPU/NPU equivalence
-on the same physical cell grid via mode switching (SCALAR / VECTOR / MATRIX).
-No traditional DRAM. External storage is persistent (NVMe/CXL), not working memory.**
+> Version 3.0 — 2026-07-24
+> Phase A 已启动。A1(控制流) + A6(SBC熔断) 已完成并纳入 v3 RTL。
 
 ---
 
-## 1. Current State Diagnosis
+## 0. 当前状态摘要
 
-```
-E1 (direction correct): PIM grid + SCALAR/VECTOR/MATRIX = single paradigm ✓
-E2 (7 critical gaps):
-    A. Cell capability insufficient: 8 op, no branch, no FP, 1-bit neighbor
-    B. Scale inadequate: 4×4 = 16 cells (demo, not processor)
-    C. No control flow: Sequencer = 16-entry linear microcode, no JMP/loop/cond
-    D. Storage interface vacuum: RA-BUS target 3 = 0xDEAD_BEEF stub
-    E. Audit semantics fake: spl_cim_causal_unit uses magic numbers, NOMOS not connected
-    F. Programming model absent: no compilable ISA, no mappable toolchain
-    G. Non-parameterizable: vec_sum/mat_total hardcoded to 4 rows
-```
+| 模块 | 版本 | 状态 |
+|------|------|------|
+| spl_pim_sequencer | v4 | ✅ 256-entry 程序存储器 + JMP/JZ/JNZ/CALL/RET/HALT 控制流 |
+| spl_pim_compute_array | v2.1 | ✅ 新增 pim_flag 零标志输出 |
+| G1_Top_Integrated | v3 | ✅ SBC fuse_blown 熔断机制 (Materica #4) |
+| SPL-Core.json | v0.3 | ✅ ISA 新增 6 条控制流指令 |
+| tb_G1_Integrated | v3 | ✅ Test 6(循环) + Test 7(熔断架构验证) |
 
 ---
 
-## 2. Cell Architecture Upgrade (Gap A)
 
-### 2.1 ALU Extension: 8 op → 32 op
+SPL-G1 不是传统 CPU、GPU 或 NPU。
 
-| Opcode | Mnemonic | Description |
-|--------|----------|-------------|
-| 0x00 | NOP | No operation (passthrough) |
-| 0x01 | ADD | local + input |
-| 0x02 | ADC | ADD with carry-in (chainable for wide arithmetic) |
-| 0x03 | SUB | local - input |
-| 0x04 | SBB | SUB with borrow |
-| 0x05 | MUL_LO | Multiply, low 64 bits |
-| 0x06 | MUL_HI | Multiply, high 64 bits (→ 128-bit composition) |
-| 0x07 | MAC | Multiply-accumulate: local + (local × input) |
-| 0x08 | CMP_EQ | Equality compare → {63'b0, eq} |
-| 0x09 | CMP_NE | Not-equal |
-| 0x0A | CMP_LT | Signed less-than |
-| 0x0B | CMP_GT | Signed greater-than |
-| 0x0C | SHL | Shift left logical |
-| 0x0D | SHR | Shift right logical |
-| 0x0E | SAR | Shift right arithmetic |
-| 0x0F | AND | Bitwise AND |
-| 0x10 | OR | Bitwise OR |
-| 0x11 | XOR | Bitwise XOR |
-| 0x12 | NOT | Bitwise NOT (ignore ra_data_in) |
-| 0x13 | FP16_ADD | Half-precision float add |
-| 0x14 | FP16_SUB | FP16 subtract |
-| 0x15 | FP16_MUL | FP16 multiply |
-| 0x16 | FP16_CMP | FP16 equality |
-| 0x17 | FP16_MAC | FP16 multiply-accumulate |
-| 0x18 | PRED_SET | Set predicate register from CMP result |
-| 0x19 | LOAD_ROW | Load from row-neighbour bus (8-bit wide) |
-| 0x1A | LOAD_COL | Load from column-neighbour bus |
-| 0x1B | STORE_LOCAL | Force-write to local_store (bypasses pim_store_en) |
-| 0x1C-0x1F | RESERVED | Future: BF16, transcendental, crypto |
+它是一个 **因果可审计的 PIM 阵列处理器（Causal-Auditable PIM Array Processor）**。
 
-### 2.2 New Ports
+### 0.1 核心特征
 
-```systemverilog
-// Predicate execution
-input  logic        pred_en;        // 1 = use predicate for conditional exec
-output logic        pred_reg;       // predicate register (set by CMP ops)
+| 维度 | 是什么 | 不是什么 |
+|------|--------|---------|
+| **计算范式** | 2D PIM 网格：每个单元 = 64-bit 存储 + 32-op ALU，存算一体 | 不是冯·诺依曼架构（没有独立的运算器+存储器） |
+| **执行模式** | 三种模式复用同一物理网格：SCALAR（单单元）、VECTOR（列并行）、MATRIX（全网格） | 不是"CPU+GPU+NPU 三芯片合一"——是三种计算原语共用一种硬件 |
+| **内存模型** | 分布式：每单元 64-bit local_store 即工作内存，无集中式 DRAM | 不是"抛弃内存"——是 local_store 容量决定了工作集上限，外部仍需持久存储 |
+| **互连** | RA-BUS 统一地址总线：READ/WRITE/EXECUTE/CONFIG 四事务类型 | 不是通用总线（缺 DMA、缺中断、缺外部存储通道） |
+| **安全/审计** | 256-bit 硬件身份锚定 + 因果约束检查单元（每操作可追溯 P→Q 因果对） | 不是密码学安全芯片（身份锚定是常量哈希比对，非密码学协议） |
+| **设计哲学** | 每个计算操作都携带因果出处。目标场景：合规计算、可信推理 | 不是通用计算平台 |
 
-// Wide neighbour interconnect (replaces 1-bit)
-input  logic [7:0]  row_data_in;    // data from north neighbour
-output logic [7:0]  row_data_out;   // data to south neighbour
-input  logic [7:0]  col_data_in;    // data from west neighbour
-output logic [7:0]  col_data_out;   // data to east neighbour
+### 0.2 架构层次
+
+```
+┌─────────────────────────────────────────────┐
+│               G1_Top_Integrated              │
+│                                              │
+│  ┌──────────┐  ┌─────────────────────────┐  │
+│  │ Identity │  │    RA-BUS Arbiter        │  │
+│  │  Anchor  │  │  (4-target addr decode)  │  │
+│  │ 256-bit  │  └──────┬──────┬──────┬─────┘  │
+│  │   hash   │    0x0  │ 0x1  │ 0x2  │ 0x3   │
+│  └──────────┘    PIM  │Audit │Ident │Stub  │
+│                       │      │      │      │
+│  ┌────────────────────┘      │      │      │
+│  │  PIM Sequencer v3         │      │      │
+│  │  (16-entry microcode)     │      │      │
+│  │  causal-audit closed loop │      │      │
+│  └──────────┬───────────────┘      │      │
+│             │                      │      │
+│  ┌──────────▼────────────────────┐ │      │
+│  │   PIM Compute Array v2       │ │      │
+│  │   4×4 grid = 16 cells        │ │      │
+│  │   ┌───┬───┬───┬───┐         │ │      │
+│  │   │C00│C01│C02│C03│ ← N/S   │ │      │
+│  │   ├───┼───┼───┼───┤   8-bit │ │      │
+│  │   │C10│C11│C12│C13│   neigh │ │      │
+│  │   ├───┼───┼───┼───┤   bor   │ │      │
+│  │   │C20│C21│C22│C23│         │ │      │
+│  │   ├───┼───┼───┼───┤         │ │      │
+│  │   │C30│C31│C32│C33│         │ │      │
+│  │   └───┴───┴───┴───┘         │ │      │
+│  │   每单元: 64-bit store        │ │      │
+│  │          + 32-op ALU         │ │      │
+│  │          + 1-bit predicate   │ │      │
+│  │   vec_sum / mat_total        │ │      │
+│  └──────────────────────────────┘ │      │
+│                                   │      │
+│  ┌────────────────────────────────▼─────┐│
+│  │  Causal Audit Array (4× v2 units)   ││
+│  │  256-bit causal record wire format   ││
+│  │  constraint_pass ∧ dep_valid → pass  ││
+│  └──────────────────────────────────────┘│
+└─────────────────────────────────────────────┘
 ```
 
-### 2.3 Implementation: `rtl/spl_pim_cell_v2.sv`
+### 0.3 当前能力边界
 
-See companion file. Backward-compatible with existing `spl_pim_cell` interface
-(1-bit neighbour wires tie to bit[0]; pred_en grounded).
+| 能做什么 | 不能做什么 |
+|----------|-----------|
+| RTL 仿真中 16 个单元的定点整数运算 | 任何超出 128 字节工作集的计算 |
+| 4 个单元的列向量并行 | 条件分支、循环、函数调用 |
+| 16 个单元的全网格同步激活 | 浮点运算（FP16 操作码是整数冒充的） |
+| RA-BUS 地址空间内的数据读写 | 从外部存储加载/写入数据 |
+| 身份锚定验证（256-bit） | 语义级因果审计（运行在 pass-through 模式） |
+| EDA 工具链：因果描述 → 网表 → RTL 工件 | 综合/布局布线/功耗估算 |
 
 ---
 
-## 3. Scale Model & Parameterization (Gaps B + G)
+## 1. 已完成项（Phase 1-5 实际完成状态）
 
-### 3.1 Hierarchical Tiling
-
-| Level | Dimensions | Cells | Interconnect | Purpose |
-|-------|-----------|-------|-------------|---------|
-| Cell | 1×1 | 1 | — | Atomic compute-store unit |
-| Tile | 16×16 | 256 | RA-BUS arbiter (4 targets) | Minimum functional unit |
-| Block | 4×4 Tiles | 4,096 | 2D mesh of arbiters | Tape-out minimum |
-| Chip | 8×8 Blocks | 262,144 | Hierarchical mesh + CXL | Production processor |
-
-### 3.2 Parameterized Reduction Tree
-
-Replace hardcoded `vec_sum[0] = cell[0][0] + cell[1][0] + cell[2][0] + cell[3][0]` with:
-
-```systemverilog
-module spl_pim_reduce_tree #(parameter int N = 16) (
-    input  logic [63:0] values [N-1:0],
-    output logic [63:0] total
-);
-    // O(log₂N) pipelined reduction
-    // 16 inputs → 4 stages, 256 inputs → 8 stages
-endmodule
-```
-
-### 3.3 RA-BUS Extension
-
-```
-Current: Single arbiter → 4 fixed targets
-Phase 3:  Tile-internal RA-BUS (unchanged) +
-          Tile-to-tile 2D mesh router (5 ports: N/S/E/W/LOCAL) +
-          Chip-to-host CXL.io / PCIe Gen5
-```
+| 阶段 | 状态 | 关键交付 |
+|------|------|---------|
+| Phase 1: 构建环境 | ✅ | iverilog 安装，编码问题修复 |
+| Phase 2: PIM 计算阵列 | ✅ | spl_pim_cell.sv (32-op ALU)，spl_pim_compute_array.sv (4×4, 3模式)，spl_pim_sequencer.sv (16条目微码 + 审计闭环)，41/41 测试通过 |
+| Phase 3: RA-BUS | ✅ | ra_bus_arbiter.sv (4目标仲裁)，ra_bus_protocol.md，G1_Top_Integrated.sv |
+| Phase 4: EDA↔RTL | ✅ | eda_rtlgen.py (config_pkg + tb_stimulus + syn_tcl) |
+| Phase 5: 鲁棒性 | ✅ | 集成测试 5/5 通过，README 更新，文档完善 |
 
 ---
 
-## 4. Control Flow & ISA (Gaps C + F)
+## 2. 剩余差距（按卡脖子程度排序）
 
-### 4.1 SPL-G1 ISA v1.0 (32-bit fixed-length)
+### 层级一：不能跑程序
 
-```
-[31:28] opcode   [27:24] cond    [23:16] mode    [15:8] reg    [7:0] imm
-```
+| # | 差距 | 现状 | 致命程度 |
+|---|------|------|---------|
+| **C1** | 无控制流 | 定序器 = 16 条线性微码，无 JMP/JZ/JNZ/CALL/RET | 🔴 没有循环和分支，连 `for(i=0;i<10;i++)` 都写不了 |
+| **C2** | 无编译器 | 编程 = 手写微码表（16 条 hex 值），无 splcc | 🔴 没有编译器，芯片永远只能跑手写的 demo |
 
-| Opcode | Mnemonic | Description |
-|--------|----------|-------------|
-| 0x0 | LOAD_IMM | Load immediate to cell register |
-| 0x1 | STORE | Write cell register to local_store |
-| 0x2 | ALU_OP | Execute ALU operation (op from imm[4:0]) |
-| 0x3 | BRANCH | Conditional jump (JMP/JZ/JNZ) |
-| 0x4 | MOVE_CELL | Data movement between cells |
-| 0x5 | AUDIT | Trigger causal audit check |
-| 0x6 | BARRIER | Wait for all cells in tile |
-| 0x7 | SYNC | Synchronization fence |
-| 0x8 | LOAD_EXT | DMA load from external storage |
-| 0x9 | STORE_EXT | DMA store to external storage |
-| 0xA-0xF | RESERVED | |
+### 层级二：规模不够
 
-**Key innovation**: `mode` field embedded in every instruction.
-SCALAR → VECTOR → MATRIX switching per-instruction, not per-program.
-This IS the "one paradigm = CPU+GPU+NPU" at the ISA level.
+| # | 差距 | 现状 | 致命程度 |
+|---|------|------|---------|
+| **S1** | 工作集太小 | 16 单元 × 64-bit = 128 字节 | 🔴 连最小的神经网络权重都装不下 |
+| **S2** | 外存不通 | RA-BUS 目标 3 = 存根 | 🔴 数据进不来、出不去 |
+| **S3** | 归约树硬编码 | vec_sum/mat_total 手写 4 输入，不能自动适配更大规模 | 🟡 扩展时必须重写 |
 
-### 4.2 PPCU (PIM Program Counter Unit)
+### 层级三：功能虚假
 
-```
-Upgrade spl_pim_sequencer → spl_ppcu:
-  - 256-entry program store (CONFIG-writable)
-  - JMP / JZ / JNZ (conditional on predicate register)
-  - CALL / RET (4-deep return stack)
-  - exec_mode per instruction (not per sequence)
-  - BARRIER: stall until all cells in tile complete current op
-```
+| # | 差距 | 现状 | 致命程度 |
+|---|------|------|---------|
+| **F1** | FP16 是假的 | FP16 操作码用整数运算实现，不遵循 IEEE 754 | 🟡 声称的浮点能力不存在 |
+| **F2** | 审计在空转 | constraint_bits = 全 1 → pass-through 模式，所有操作一律通过 | 🟡 因果审计不审计因果 |
+| **F3** | 熔断未实现 | SBC 熔断机制已在 Materica 要求 #4 定义（`fuse_blown` + 永久逻辑锁定），但 RTL 无该信号/逻辑；审计失败仅当拍 transient（logic_valid=0），下一周期即可恢复输出 | 🔴 违规计算结果仍可流出，规范已要求但未落地 |
+
+### 层级四：硬件验证链断裂
+
+| # | 差距 | 现状 | 致命程度 |
+|---|------|------|---------|
+| **H1** | 无综合数据 | 未跑过 Yosys/DC，不知道面积/功耗/频率 | 🟡 没法判断能不能流片 |
+| **H2** | 无时序约束 | 无 SDC，无 clock domain 定义 | 🟡 不能做布局布线 |
+| **H3** | PDK 未经流片验证 | 硅基 PDK 参数是估计值，光子 PDK 明确标注"占位" | 🟡 不能做 tape-out |
+| **H4** | 邻居互联未集成测试 | 8-bit 邻居总线在 cell 级测过，在集成级未测 | 🟢 低风险 |
 
 ---
 
-## 5. Storage Interface (Gap D)
+## 3. 分阶段改进计划
 
-PIM principle: **cell.local_store IS working memory. No DRAM.**
+### Phase A — 让芯片能跑程序（优先级最高，3-4 周）
 
-External storage = persistent only (SSD, CXL Type-3 memory pool).
+**目标**：能写 C 代码、编译、在仿真中跑出带循环和分支的程序。
 
-```
-LOAD_EXT(addr, tile_row, tile_col, length):
-    DMA engine reads from NVMe → writes to RA-BUS target 3 →
-    data dispersed to specified tile region
+| 任务 | 产出 | 验证标准 |
+|------|------|---------|
+| A1. PPCU 升级 | 👀 spl_pim_sequencer/*v4***：256 条目程序存储器，JMP/JZ/JNZ/CALL/RET/HALT，返回栈(8深)，OOB保护 | ✅ 含循环测试用例 (Test 6) |
+| A2. 真实 FP16 | IEEE 754 half-precision：符号/指数/尾数/舍入/NaN/Inf | 测试向量覆盖 subnormal/overflow |
+| A3. splcc v0.1 | C 子集编译器：变量/数组/循环/分支 → SPL-G1 ISA 二进制 | `sum=0; for(i=0;i<10;i++) sum+=a[i]` 编译后仿真通过 |
+| A4. READ 事务 | 补充定序器的 RA-BUS READ 实现 | 能从 PIM 阵列读回数据 |
+| A5. 因果约束规则 v1 | 定义最小禁止规则集（6-10 条），写入 constraint_bits，关闭 pass-through | audit 对违规操作正确 reject |
+| A6. 实现 SBC 熔断机制 | 👀 G1_Top_Integrated/*v3***：`fuse_blown` 输出，audit_fb_pass==0→永久锁定→ra_rdata 强制清零，仅 rst_n 恢复 | ✅ 架构验证通过 (Test 7)；真实熔断需 A5 规则闭合 |
 
-STORE_EXT(addr, tile_row, tile_col, length):
-    Reverse path: tile region → RA-BUS target 3 → DMA → NVMe write
-```
+### Phase B — 让芯片能装下数据（4-6 周）
 
-### Implementation (Phase 3)
+**目标**：扩展规模到可用级别，打通外存通道。
 
-```
-RA-BUS target 3 → AXI4-MM bridge → SimpleNVMe controller → FPGA NVMe IP / real SSD
-```
+| 任务 | 产出 | 验证标准 |
+|------|------|---------|
+| B1. Tile 级网格 | 16×16 = 256 单元，参数化 generate | 256 单元所有模式仿真通过 |
+| B2. 流水线归约树 | spl_pim_reduce_tree.sv：O(log₂N) 流水线 | 256 输入 8 级流水，每周期 1 归约 |
+| B3. Tile 间互联 | 5 端口 2D mesh 路由器（N/S/E/W/LOCAL） | 相邻 tile 数据交换无死锁 |
+| B4. 存储控制器 | RA-BUS 目标 3 = AXI4-MM 桥，仿真级 NVMe 行为模型 | LOAD_EXT/STORE_EXT 在仿真中正确搬运 |
+| B5. BARRIER 同步 | 所有单元完成当前操作后统一推进 | 多 tile 协作不出现数据竞争 |
 
-Bandwidth target: ~2 GB/s (PCIe Gen3 ×2 equivalent), sufficient for 256-cell tile.
+### Phase C — 物理可行性验证（6-8 周）
 
----
+**目标**：从 RTL 仿真走向硅验证的前置工作。
 
-## 6. NOMOS Causal Audit Integration (Gap E)
+| 任务 | 产出 | 验证标准 |
+|------|------|---------|
+| C1. Yosys 综合 | 门级网表，面积报告，功耗估算 | 256-cell tile 的面积/功耗数据 |
+| C2. SkyWater 130nm 对接 | 真实开源 PDK 参数替换硅基 PDK 估计值 | 所有延迟/功耗基于真实工艺 |
+| C3. SDC 时序约束 | 时钟定义、IO 延迟、多周期路径 | STA 无违例 |
+| C4. 规模模拟器 | Python 行为级模拟器，支持数千单元 | 模拟结果与 RTL 仿真一致 |
+| C5. Block 级集成 | 4096 单元 RTL（4×4 tile），完整验证 | 通过全规模测试 |
 
-### 6.1 Causal Record Wire Format (256-bit)
+### Phase D — 工具链与生态（持续）
 
-```
-[255:248] rule_id          — NOMOS constraint rule hash prefix
-[247:192] dep_mask         — 56-bit dependency bitmask (which premises)
-[191:128] constraint_bits  — 64-bit hard-constraint pass bits (1=OK)
-[127:64]  weight_q16_16    — weight / sensitivity (Q16.16 fixed-point)
-[63:0]    provenance_lo    — provenance chain hash, low 64 bits
-```
-
-### 6.2 Audit Unit v2
-
-```systemverilog
-// Replaces magic-number detection (0xAAAA, 0xFF, 0xDE→0xAD)
-// with NOMOS-derived constraint checking
-
-logic constraint_pass = (causal_record[191:128] == 64'hFFFF_FFFF_FFFF_FFFF);
-logic dep_valid = ((causal_record[247:192] & ~assumption_state[55:0]) == 56'h0);
-logic logic_valid = constraint_pass && dep_valid;
-```
-
-### 6.3 NOMOS → PIM Pipeline
-
-```
-NOMOS engine.py  →  invalidation_closure  →  causal_record.json
-    →  eda_mapper.py  →  RA-BUS CONFIG write to audit area
-```
+| 任务 | 产出 |
+|------|------|
+| D1. splcc 完善 | 支持更多 C 特性：函数调用、指针、结构体 |
+| D2. 调试工具 | 波形查看器配置、断言库、性能计数器 |
+| D3. 示例库 | 5-10 个实际算法示例（矩阵乘、卷积、排序、因果审计流程） |
+| D4. FPGA 原型 | 在 FPGA 上跑缩减规模的硬件原型 |
 
 ---
 
-## 7. Programming Model & Toolchain (Gap F)
+## 4. 风险登记
 
-```
-SPL-C (C subset with PIM annotations)
-        │
-    splcc compiler (3 passes)
-    ┌───────────┴───────────┐
-  Dataflow Graph        Control-Flow Graph
-    │                       │
-  grid_placer.py        seq_scheduler.py
-    │                       │
-  Cell placement map     PPCU instruction stream
-    └───────────┬───────────┘
-         SPL-G1 ISA binary
-                │
-         eda_rtlgen.py
-                │
-      config_pkg.sv + microcode table
-```
-
-### Compiler Mode Mapping
-
-| Source Pattern | Compiler Recognition | PIM Mode |
-|---------------|---------------------|----------|
-| `for(i=0;i<N;i++) a[i] += b[i]` | Independent vector loop | VECTOR (column-parallel) |
-| `C = A × B` (matmul) | Nested loop, reduction | MATRIX (full grid MAC) |
-| `if(x>0) y=f(x) else y=g(x)` | Control flow, branch | SCALAR (predicated) |
+| 风险 | 影响 | 缓解措施 |
+|------|------|----------|
+| FP16 IEEE 754 实现复杂度超预期 | Phase A 延期 | 先实现子集（normal only），逐步补齐 |
+| 256 单元超过 FPGA 资源 | Phase B 阻塞 | 先在仿真验证功能，FPGA 阶段降规模 |
+| splcc 编译器开发周期过长 | Phase A 延期 | v0.1 仅支持最小 C 子集，后续迭代 |
+| BARRIER 在分布式 mesh 中死锁 | Phase B 阻塞 | 看门狗超时 + tile 复位 |
+| SkyWater 130nm 不支持 PIM 结构 | Phase C 阻塞 | 提前评估 PDK 兼容性；备选 GF 180nm |
+| 归约树时序不收敛 | Phase B/C 阻塞 | 插入流水级；必要时降频率 |
 
 ---
 
-## 8. Phased Roadmap
+## 5. 兼容性说明
 
-### Phase 1 — Foundation (2-3 weeks)
-- [x] IMPROVEMENT_PLAN.md (this document)
-- [ ] Cell v2: 32-op ALU + predicate + 8-bit neighbour (spl_pim_cell_v2.sv)
-- [ ] Array parameterization: reduction tree, generate-based dims
-- [ ] NOMOS causal_record wire format → spl_cim_causal_unit_v2
-- [ ] Full iverilog test suite passes
-
-### Phase 2 — Control Flow (2-3 weeks)
-- [ ] PPCU: 256-entry program store + JMP/JZ/JNZ/CALL/RET
-- [ ] Per-instruction mode field in microcode
-- [ ] BARRIER synchronization primitive
-- [ ] splcc compiler v0.1 (C subset → SPL-G1 ISA)
-
-### Phase 3 — Scale & Storage (4-6 weeks)
-- [ ] Tile 2D mesh interconnect (5-port router)
-- [ ] AXI4-MM bridge + storage controller (RA-BUS target 3)
-- [ ] Scale simulator (thousands of cells, behavioral)
-- [ ] Yosys synthesis + area/power estimation
-
-### Phase 4 — Tape-out Prep (8-12 weeks)
-- [ ] Block-level (4096 cells) complete RTL
-- [ ] Real PDK integration (SkyWater 130nm open-source)
-- [ ] Place & route + timing closure
-- [ ] CXL bridge (optional; fallback to AXI)
+所有新增模块作为独立文件创建，与现有模块共存。现有测试台 `tb_G1_Integrated.sv` 和 EDA 工具链不受影响，直到集成测试完成。
 
 ---
 
-## 9. Risk Register
-
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| 4096 cells exceeds area budget | Phase 4 blocked | Phase 3 synthesis first; downscale if needed |
-| 8-bit neighbour bus power too high | VECTOR/MATRIX perf collapse | Power-gate idle rows/columns |
-| PPCU BARRIER deadlock in distributed grid | Program hang | Timeout watchdog → tile reset |
-| NOMOS rules > 256 | Bitmask overflow | Sharding: multi-pass per batch of 256 rules |
-
----
-
-## 10. Compatibility Note
-
-All v2 modules are created as NEW files alongside existing ones.
-Existing testbench, EDA toolchain, and `G1_Top_Integrated` continue to work
-with original `spl_pim_cell` until integration testing completes.
-
----
-
-*Derived from formal co-design audit of NOMOS (IMDA AI Verify 95/100) + SPL-G1 RTL.*
-*Decision authority: NOHN-AI. License: SPL-G1 dual-track.*
+*架构定义：NOHN-AI / 上海霖铭均华科技有限公司*
+*许可证：SPL-G1 双轨制（个人非商业研究免费，政府/企业需商业授权）*

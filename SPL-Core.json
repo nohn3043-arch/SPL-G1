@@ -53,6 +53,36 @@
       "op": "STATE",
       "code": "0x24",
       "desc": "状态更新：在 PIM 阵列中就地更新并持久化审计状态"
+    },
+    {
+      "op": "JMP",
+      "code": "0xF0",
+      "desc": "无条件跳转：PC = immediate（控制流指令，不触发PIM计算）"
+    },
+    {
+      "op": "JZ",
+      "code": "0xF1",
+      "desc": "条件跳转（为零）：pim_flag==1 时 PC = immediate，否则 PC+1"
+    },
+    {
+      "op": "JNZ",
+      "code": "0xF2",
+      "desc": "条件跳转（非零）：pim_flag==0 时 PC = immediate，否则 PC+1"
+    },
+    {
+      "op": "CALL",
+      "code": "0xF3",
+      "desc": "子程序调用：压入返回地址(PC+1)至返回栈，PC = immediate"
+    },
+    {
+      "op": "RET",
+      "code": "0xF4",
+      "desc": "子程序返回：从返回栈弹出返回地址，PC = 弹出值"
+    },
+    {
+      "op": "HALT",
+      "code": "0xF5",
+      "desc": "终止执行：结束当前序列，跳转到 DONE 状态"
     }
   ]
 }

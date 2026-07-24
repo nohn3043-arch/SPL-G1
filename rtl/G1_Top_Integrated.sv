@@ -1,16 +1,17 @@
 // ============================================================================
-// G1_Top_Integrated — SPL-G1 Full Integrated Top (v1.0)
+// G1_Top_Integrated_v3 — SPL-G1 Full Integrated Top (v3.0, Phase A)
 // ============================================================================
-// Integrates:
+// Integrates all components:
 //   1. RA-BUS Arbiter           — unified address plane (4 targets)
-//   2. PIM Compute Array (4×4)  — SCALAR/VECTOR/MATRIX compute
-//   3. PIM Sequencer            — micro-op instruction table
-//   4. Causal Audit Array (×4)  — hardware audit pipeline
+//   2. PIM Compute Array v2     — spl_pim_compute_array_v2 (parameterized, Cell v2)
+//   3. PIM Sequencer v4         — spl_pim_sequencer (v4: control-flow + 256-entry prog mem)
+//   4. Causal Audit Array v2    — spl_cim_causal_unit_v2 × 4 (constraint check)
 //   5. Identity Anchor          — 256-bit hash verification
-//   6. SBC Sequencer            — orchestrates compute→audit flow
+//   6. SBC Fuse                 — audit failure → permanent lock (Materica #4)
 //
-// This replaces the original G1_Top_Interface.v by re-wiring g1_compute_core
-// with the full PIM compute array + RA-BUS arbiter fabric.
+// v3 additions over v2:
+//   - Sequencer v4: JMP/JZ/JNZ/CALL/RET control-flow, pim_flag feedback
+//   - SBC fuse: fuse_blown output, audit_fb_pass==0 → latch → outputs zeroed
 //
 // License: SPL-G1 dual-track (see LICENSE)
 // ============================================================================
@@ -19,7 +20,7 @@ module G1_Top_Integrated (
     input  logic         clk,
     input  logic         rst_n,
 
-    // ── RA-BUS external host ──
+    // RA-BUS external host
     input  logic         ra_valid,
     input  logic [ 1:0]  ra_cmd,
     input  logic [31:0]  ra_addr,
@@ -28,17 +29,21 @@ module G1_Top_Integrated (
     output logic         ra_ready,
     output logic [ 1:0]  ra_resp,
 
-    // ── Identity verification nibble ──
+    // Identity verification
     input  logic [255:0] hardware_hash_in,
 
-    // ── Status outputs ──
+    // Status
     output logic         pim_state_stable,
-    output logic         logic_integrity_verified
+    output logic         logic_integrity_verified,
+
+    // SBC fuse (Materica #4)
+    output logic         fuse_blown       // v3: audit failure → permanent lock
 );
 
-    // ── Identity constants ──
     localparam [255:0] G1_IDENTITY  = 256'h8525D007_59A4_CA22_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     localparam int      HASH_CYCLES = 64;
+    localparam int      PIM_ROWS    = 4;
+    localparam int      PIM_COLS    = 4;
 
     // ═══════════════════════════════════════════════
     // RA-BUS Arbiter → Target signals
@@ -52,10 +57,13 @@ module G1_Top_Integrated (
     logic        pim_bus_ready, audit_bus_ready, id_bus_ready, ext_bus_ready;
     logic [1:0]  pim_bus_resp,  audit_bus_resp,  id_bus_resp,  ext_bus_resp;
 
+    // Internal RA-BUS readback (before fuse override)
+    wire [63:0] ra_rdata_int;
+
     ra_bus_arbiter u_arbiter (
         .clk, .rst_n,
         .ra_valid, .ra_cmd, .ra_addr, .ra_wdata,
-        .ra_rdata, .ra_ready, .ra_resp,
+        .ra_rdata(ra_rdata_int), .ra_ready, .ra_resp,
         .pim_valid(pim_bus_valid), .pim_cmd(pim_bus_cmd), .pim_addr(pim_bus_addr),
         .pim_wdata(pim_bus_wdata), .pim_store(pim_bus_store),
         .pim_rdata(pim_bus_rdata), .pim_ready(pim_bus_ready), .pim_resp(pim_bus_resp),
@@ -71,15 +79,16 @@ module G1_Top_Integrated (
     );
 
     // ═══════════════════════════════════════════════
-    // PIM Sequencer (target 0)
+    // PIM Sequencer v4 (v4: control-flow + pim_flag feedback)
     // ═══════════════════════════════════════════════
     logic        seq_busy, seq_done, seq_error;
-    logic        pim_en;
+    logic        pim_en, seq_audit_dispatch;
     logic [31:0] pim_seq_addr;
     logic [63:0] pim_seq_wdata;
     logic [ 7:0] pim_seq_op;
     logic [ 1:0] exec_mode;
     logic [ 7:0] seq_p_tag, seq_q_tag;
+    logic        pim_flag_wire;   // v4: PIM→sequencer zero-flag
 
     spl_pim_sequencer u_sequencer (
         .clk, .rst_n,
@@ -87,28 +96,32 @@ module G1_Top_Integrated (
         .ra_cmd(pim_bus_cmd),
         .ra_addr({4'd0, pim_bus_addr}),
         .ra_wdata(pim_bus_wdata),
+        .audit_done(audit_fb_done),
+        .audit_pass(audit_fb_pass),
+        .pim_flag(pim_flag_wire),
         .seq_busy, .seq_done, .seq_error,
         .pim_en,
         .pim_addr(pim_seq_addr),
         .pim_wdata(pim_seq_wdata),
         .pim_op(pim_seq_op),
         .exec_mode,
+        .audit_dispatch(seq_audit_dispatch),
         .gen_p_tag(seq_p_tag),
         .gen_q_tag(seq_q_tag)
     );
 
     // ═══════════════════════════════════════════════
-    // PIM Compute Array (4×4)
+    // PIM Compute Array v2 (cell_v2 + parameterized + 8-bit neighbour)
     // ═══════════════════════════════════════════════
     logic [63:0] pim_array_rdata;
     logic        pim_array_ready;
     logic [1:0]  pim_array_resp;
-    logic [ 7:0] pim_p_tags [3:0][3:0];
-    logic [ 7:0] pim_q_tags [3:0][3:0];
-    logic [63:0] pim_vec_sum [3:0];
+    logic [ 7:0] pim_p_tags [PIM_ROWS-1:0][PIM_COLS-1:0];
+    logic [ 7:0] pim_q_tags [PIM_ROWS-1:0][PIM_COLS-1:0];
+    logic [63:0] pim_vec_sum [PIM_COLS-1:0];
     logic [63:0] pim_mat_total;
 
-    spl_pim_compute_array #(.ROWS(4), .COLS(4)) u_pim_array (
+    spl_pim_compute_array #(.ROWS(PIM_ROWS), .COLS(PIM_COLS)) u_pim_array (
         .ra_clk(clk), .ra_rst_n(rst_n),
         .ra_en(pim_en),
         .ra_addr(pim_seq_addr),
@@ -122,34 +135,58 @@ module G1_Top_Integrated (
         .pim_ready(pim_array_ready),
         .pim_resp(pim_array_resp),
         .vec_sum(pim_vec_sum),
-        .mat_total(pim_mat_total)
+        .mat_total(pim_mat_total),
+        .pim_flag(pim_flag_wire)
     );
 
     assign pim_bus_rdata = pim_array_rdata;
-    assign pim_bus_ready = seq_done;     // ready when sequence complete
+    assign pim_bus_ready = seq_done;
     assign pim_bus_resp  = seq_error ? 2'd1 : 2'd0;
 
     // ═══════════════════════════════════════════════
-    // Causal Audit Array (target 1)
+    // Causal Audit Array v2 (NOMOS constraint + dep_mask cascade)
     // ═══════════════════════════════════════════════
     logic [3:0] unit_valids;
     logic       dispatch_valid;
+    logic [3:0] check_dones, check_passes;       // v3: per-check handshake
+    logic       audit_fb_done, audit_fb_pass;    // v3: AND-reduced feedback to sequencer
     logic [255:0] audit_p, audit_q;
 
-    // Aggregate P→Q from PIM array into audit pipeline
-    assign audit_p = {pim_p_tags[0][0], pim_p_tags[0][1], pim_p_tags[0][2], pim_p_tags[0][3],
-                      pim_p_tags[1][0], pim_p_tags[1][1], pim_p_tags[1][2], pim_p_tags[1][3],
-                      pim_p_tags[2][0], pim_p_tags[2][1], pim_p_tags[2][2], pim_p_tags[2][3],
-                      pim_p_tags[3][0], pim_p_tags[3][1], pim_p_tags[3][2], pim_p_tags[3][3],
-                      // upper 128 zero
-                      128'h0};
-    assign audit_q = {pim_q_tags[0][0], pim_q_tags[0][1], pim_q_tags[0][2], pim_q_tags[0][3],
-                      pim_q_tags[1][0], pim_q_tags[1][1], pim_q_tags[1][2], pim_q_tags[1][3],
-                      pim_q_tags[2][0], pim_q_tags[2][1], pim_q_tags[2][2], pim_q_tags[2][3],
-                      pim_q_tags[3][0], pim_q_tags[3][1], pim_q_tags[3][2], pim_q_tags[3][3],
-                      128'h0};
+    // Aggregate P→Q tags from PIM array into audit pipeline
+    // Format for v2: exact 256-bit field-aligned causal_record
+    //   [255:248] rule_id         = 8'h00 (bridge mode)
+    //   [247:192] dep_mask        = 56-bit packed P-tag fingerprint
+    //   [191:128] constraint_bits = 64'hFFFF_FFFF_FFFF_FFFF (all pass)
+    //   [127:64]  weight_q16_16   = 64'h0 (bridge)
+    //   [63:0]    unused
+    wire [55:0] dep_mask_bits;   // 56-bit exactly for [247:192]
+    assign dep_mask_bits = {
+        9'h0,                       // pad to 56 bits
+        pim_p_tags[0][0][5:0],      // 6 bits
+        pim_p_tags[0][1][5:0],      // 6 bits
+        pim_p_tags[0][2][5:0],      // 6 bits
+        pim_p_tags[0][3][5:0],      // 6 bits
+        pim_p_tags[1][0][5:0],      // 6 bits
+        pim_p_tags[1][1][5:0],      // 6 bits
+        pim_p_tags[1][2][5:0],      // 6 bits
+        pim_p_tags[1][3][4:0]       // 5 bits  → total 9+47 = 56
+    };
 
-    assign dispatch_valid = seq_done;
+    assign audit_p = {
+        8'h00,                          // rule_id          [255:248]
+        dep_mask_bits,                  // dep_mask         [247:192]
+        64'hFFFF_FFFF_FFFF_FFFF,        // constraint_bits  [191:128]
+        64'h0,                          // weight_q16_16    [127:64]
+        64'h0                           // pad              [63:0]
+    };  // 8 + 56 + 64 + 64 + 64 = 256
+
+    assign audit_q = {
+        192'h0,
+        pim_q_tags[0][0], pim_q_tags[0][1], pim_q_tags[0][2], pim_q_tags[0][3],
+        pim_q_tags[1][0], pim_q_tags[1][1], pim_q_tags[1][2], pim_q_tags[1][3]
+    };
+
+    assign dispatch_valid = seq_audit_dispatch;   // v3: per-op dispatch, not batch seq_done
 
     generate
         genvar gi;
@@ -159,18 +196,23 @@ module G1_Top_Integrated (
                 .wr_en(dispatch_valid),
                 .wr_data_p(audit_p),
                 .wr_data_q(audit_q),
-                .logic_valid(unit_valids[gi])
+                .logic_valid(unit_valids[gi]),
+                .check_done(check_dones[gi]),
+                .check_pass(check_passes[gi])
             );
         end
     endgenerate
 
-    // Audit bus (read-only: expose unit_valids)
+    // ── Causal audit feedback to sequencer (v3: closed loop) ──
+    assign audit_fb_done = (&check_dones);
+    assign audit_fb_pass = (&check_passes);
+
     assign audit_bus_rdata = {60'h0, unit_valids};
     assign audit_bus_ready = 1'b1;
     assign audit_bus_resp  = 2'd0;
 
     // ═══════════════════════════════════════════════
-    // Identity Anchor (target 2)
+    // Identity Anchor (unchanged)
     // ═══════════════════════════════════════════════
     logic [5:0]  hash_idx;
     logic        hash_done, hash_pass;
@@ -182,7 +224,7 @@ module G1_Top_Integrated (
             hash_done <= 1'b0;
             hash_pass <= 1'b1;
         end else if (!hash_done) begin
-            if (id_bus_valid && id_bus_cmd == 2'b01) begin  // WRITE = hash nibble
+            if (id_bus_valid && id_bus_cmd == 2'b01) begin
                 expected_nibble = G1_IDENTITY[(hash_idx * 4) +: 4];
                 if (hardware_hash_in[3:0] != expected_nibble)
                     hash_pass <= 1'b0;
@@ -201,13 +243,30 @@ module G1_Top_Integrated (
     // ═══════════════════════════════════════════════
     // External expansion (target 3) — stub
     // ═══════════════════════════════════════════════
-    assign ext_bus_rdata = 64'hDEAD_0000_0000_BEEF;  // reserved
+    assign ext_bus_rdata = 64'hDEAD_0000_0000_BEEF;
     assign ext_bus_ready = 1'b1;
-    assign ext_bus_resp  = 2'd1;   // not implemented
+    assign ext_bus_resp  = 2'd1;
 
     // ═══════════════════════════════════════════════
-    // Top-level status
+    // SBC Fuse — Materica #4 Security Boundary Controller
     // ═══════════════════════════════════════════════
-    assign pim_state_stable = (&unit_valids) && !seq_busy;
+    // Audit failure (audit_fb_done && !audit_fb_pass) → permanent logic lock.
+    // Once blown, all RA-BUS output data is forced to 0.
+    // Recovery: hardware reset (rst_n) only. Software/commands cannot clear.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fuse_blown <= 1'b0;
+        end else if (audit_fb_done && !audit_fb_pass) begin
+            fuse_blown <= 1'b1;   // audit violation → permanent lock
+        end
+    end
+
+    // ═══════════════════════════════════════════════
+    // Top-level status (fuse-aware)
+    // ═══════════════════════════════════════════════
+    assign pim_state_stable = (&unit_valids) && !seq_busy && !fuse_blown;
+
+    // Fuse-blown output override: force rdata to zero
+    assign ra_rdata = fuse_blown ? 64'h0 : ra_rdata_int;
 
 endmodule

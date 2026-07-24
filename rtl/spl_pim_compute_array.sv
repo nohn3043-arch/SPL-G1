@@ -1,53 +1,52 @@
 // ============================================================================
-// spl_pim_compute_array — PIM Compute Grid (ROWS × COLS cells)
+// spl_pim_compute_array_v2 — PIM Compute Grid v2 (Parameterized + Cell v2)
 // ============================================================================
-// A 2D grid of spl_pim_cell instances, driven by the micro-op sequencer
-// and addressed via RA-BUS. Supports three execution modes on THE SAME grid:
+// Upgrades over v1:
+//   - Cell: spl_pim_cell → spl_pim_cell_v2 (32-op + predicate + 8-bit neighbour)
+//   - Neighbour: 1-bit → 8-bit wide interconnect
+//   - Reduction: fully parameterized (ROWS×COLS auto-derived, not hardcoded 4)
+//   - Predicate: pred_en wired in SCALAR mode only
+//   - ra_op: 8-bit sequencer op → 5-bit cell op (truncated)
 //
-//   SCALAR  — single cell targeted by ra_addr; scalar arithmetic
-//   VECTOR  — one column activated; all rows in column compute in parallel
-//   MATRIX  — full 2D array; used for matrix multiply / systolic accumulation
-//
-// The array produces P/Q causal tags per cell, which feed into the SPL-G1
-// causal audit pipeline (spl_cim_causal_unit × 4).
-//
+// Backward compatible port map with spl_pim_compute_array.
 // License: SPL-G1 dual-track (see LICENSE)
 // ============================================================================
 
 module spl_pim_compute_array #(
-    parameter int ROWS = 16,
-    parameter int COLS = 16
+    parameter int ROWS = 4,
+    parameter int COLS = 4
 ) (
-    // RA-BUS (addressable via arbiter, synchronous to ra_clk)
     input  logic                  ra_clk,
     input  logic                  ra_rst_n,
-    input  logic                  ra_en,           // RA-BUS transaction active
-    input  logic [31:0]           ra_addr,         // [31:24] row, [23:16] col, low 16 reserved
+    input  logic                  ra_en,
+    input  logic [31:0]           ra_addr,
     input  logic [63:0]           ra_wdata,
     output logic [63:0]           ra_rdata,
 
-    // Micro-op control from sequencer
     input  logic [ 7:0]           pim_op,
-    input  logic                  pim_store_en,    // 1=store result; 0=read-only
-    input  logic [ 1:0]           exec_mode,       // 00:IDLE 01:SCALAR 10:VECTOR 11:MATRIX
+    input  logic                  pim_store_en,
+    input  logic [ 1:0]           exec_mode,
 
-    // Aggregated causal tag outputs (for audit pipeline)
     output logic [ 7:0]           raw_p_tag [ROWS-1:0][COLS-1:0],
     output logic [ 7:0]           raw_q_tag [ROWS-1:0][COLS-1:0],
 
-    // Ready / Response handshake (for RA-BUS arbiter)
-    output logic                  pim_ready,       // 1=result valid this cycle
-    output logic [ 1:0]           pim_resp,        // 00:OK 01:ERROR
+    output logic                  pim_ready,
+    output logic [ 1:0]           pim_resp,
 
-    // Result aggregation
-    output logic [63:0]           vec_sum   [COLS-1:0],  // per-column vector sum
-    output logic [63:0]           mat_total             // full-array MAC total (64b)
+    output logic [63:0]           vec_sum   [COLS-1:0],
+    output logic [63:0]           mat_total,
+
+    output logic                  pim_flag    // v4: result-is-zero flag (latched, for control flow)
 );
 
-    // ── Cell interconnect wires ──
     logic [63:0] cell_data_out [ROWS-1:0][COLS-1:0];
-    logic        ns_link       [ROWS:0][COLS-1:0];   // vertical (north/south)
-    logic        ew_link       [ROWS-1:0][COLS:0];   // horizontal (east/west)
+    logic [ 7:0] ns_link_in    [ROWS-1:0][COLS-1:0];
+    logic [ 7:0] ns_link_out   [ROWS-1:0][COLS-1:0];
+    logic [ 7:0] ew_link_in    [ROWS-1:0][COLS-1:0];
+    logic [ 7:0] ew_link_out   [ROWS-1:0][COLS-1:0];
+    logic [ 4:0] cell_op;
+
+    assign cell_op = pim_op[4:0];
 
     // ── Row/col decode ──
     logic [ROWS-1:0] row_sel;
@@ -58,42 +57,34 @@ module spl_pim_compute_array #(
         col_sel = {COLS{1'b0}};
         if (ra_en) begin
             case (exec_mode)
-                2'b01: begin // SCALAR: single cell
-                    row_sel[ra_addr[31:24]] = 1'b1;
-                    col_sel[ra_addr[23:16]] = 1'b1;
-                end
-                2'b10: begin // VECTOR: whole column
-                    row_sel = {ROWS{1'b1}};
-                    col_sel[ra_addr[23:16]] = 1'b1;
-                end
-                2'b11: begin // MATRIX: full grid
-                    row_sel = {ROWS{1'b1}};
-                    col_sel = {COLS{1'b1}};
-                end
-                default: ; // IDLE: no selection
+                2'b01: begin row_sel[ra_addr[31:24]] = 1'b1; col_sel[ra_addr[23:16]] = 1'b1; end
+                2'b10: begin row_sel = {ROWS{1'b1}};        col_sel[ra_addr[23:16]] = 1'b1; end
+                2'b11: begin row_sel = {ROWS{1'b1}};        col_sel = {COLS{1'b1}};        end
+                default: ;
             endcase
         end
     end
 
-    // ── Cell instantiation ──
+    // ── Cell instantiation (v2) ──
+    wire cell_pred_en = (exec_mode == 2'b01);
+
     genvar r, c;
     generate
         for (r = 0; r < ROWS; r = r + 1) begin : gen_row
             for (c = 0; c < COLS; c = c + 1) begin : gen_col
-                spl_pim_cell #(
-                    .IDX_ROW(r),
-                    .IDX_COL(c)
-                ) u_cell (
-                    .ra_clk       (ra_clk),
-                    .ra_rst_n     (ra_rst_n),
-                    .ra_op        (pim_op),
+                wire pred_o;
+                spl_pim_cell #(.IDX_ROW(r), .IDX_COL(c)) u_cell (
+                    .ra_clk, .ra_rst_n,
+                    .ra_op        (cell_op),
                     .ra_data_in   (row_sel[r] && col_sel[c] ? ra_wdata : 64'h0),
                     .ra_data_out  (cell_data_out[r][c]),
-                    .pim_store_en (pim_store_en),
-                    .pim_north_i  (ns_link[r][c]),
-                    .pim_south_o  (ns_link[r+1][c]),
-                    .pim_west_i   (ew_link[r][c]),
-                    .pim_east_o   (ew_link[r][c+1]),
+                    .pim_store_en,
+                    .row_data_in  (ns_link_in[r][c]),
+                    .row_data_out (ns_link_out[r][c]),
+                    .col_data_in  (ew_link_in[r][c]),
+                    .col_data_out (ew_link_out[r][c]),
+                    .pred_en      (cell_pred_en),
+                    .pred_reg     (pred_o),
                     .exec_mode    (row_sel[r] && col_sel[c] ? exec_mode : 2'b00),
                     .p_tag_value  (raw_p_tag[r][c]),
                     .q_tag_value  (raw_q_tag[r][c])
@@ -102,47 +93,77 @@ module spl_pim_compute_array #(
         end
     endgenerate
 
-    // ── Top/bottom neighbour tie-off ──
+    // ── Neighbour wiring (8-bit grid) ──
     generate
-        for (c = 0; c < COLS; c = c + 1) begin : gen_ns_tie
-            assign ns_link[0][c] = 1'b0;       // north edge grounded
-            // ns_link[ROWS][c] left floating (no south consumer)
+        for (c = 0; c < COLS; c = c + 1) begin : gen_ns
+            assign ns_link_in[0][c] = 8'h00;
+            for (r = 0; r < ROWS-1; r = r + 1) begin : gen_ns_int
+                assign ns_link_in[r+1][c] = ns_link_out[r][c];
+            end
         end
-        for (r = 0; r < ROWS; r = r + 1) begin : gen_ew_tie
-            assign ew_link[r][0] = 1'b0;       // west edge grounded
-            // ew_link[r][COLS] left floating (no east consumer)
+        for (r = 0; r < ROWS; r = r + 1) begin : gen_ew
+            assign ew_link_in[r][0] = 8'h00;
+            for (c = 0; c < COLS-1; c = c + 1) begin : gen_ew_int
+                assign ew_link_in[r][c+1] = ew_link_out[r][c];
+            end
         end
     endgenerate
 
-    // ── SCALAR readback: selected cell's data ──
+    // ── SCALAR readback ──
     always_comb begin
         ra_rdata = 64'h0;
-        if (ra_en && exec_mode == 2'b01) begin
+        if (ra_en && exec_mode == 2'b01)
             ra_rdata = cell_data_out[ra_addr[31:24]][ra_addr[23:16]];
-        end
     end
 
-    // ── VECTOR sum per column (4×4 explicit for iverilog compat) ──
-    assign vec_sum[0] = cell_data_out[0][0] + cell_data_out[1][0] + cell_data_out[2][0] + cell_data_out[3][0];
-    assign vec_sum[1] = cell_data_out[0][1] + cell_data_out[1][1] + cell_data_out[2][1] + cell_data_out[3][1];
-    assign vec_sum[2] = cell_data_out[0][2] + cell_data_out[1][2] + cell_data_out[2][2] + cell_data_out[3][2];
-    assign vec_sum[3] = cell_data_out[0][3] + cell_data_out[1][3] + cell_data_out[2][3] + cell_data_out[3][3];
+    // ── Parameterized vector sum (per column) ──
+    generate
+        for (c = 0; c < COLS; c = c + 1) begin : gen_vec_sum
+            logic [63:0] col_acc;
+            integer ri;
+            always_comb begin
+                col_acc = 64'd0;
+                for (ri = 0; ri < ROWS; ri = ri + 1)
+                    col_acc = col_acc + cell_data_out[ri][c];
+            end
+            assign vec_sum[c] = col_acc;
+        end
+    endgenerate
 
-    // ── MATRIX total: row-sums then sum-of-sums (4×4 explicit) ──
-    wire [63:0] mat_row0 = cell_data_out[0][0] + cell_data_out[0][1] + cell_data_out[0][2] + cell_data_out[0][3];
-    wire [63:0] mat_row1 = cell_data_out[1][0] + cell_data_out[1][1] + cell_data_out[1][2] + cell_data_out[1][3];
-    wire [63:0] mat_row2 = cell_data_out[2][0] + cell_data_out[2][1] + cell_data_out[2][2] + cell_data_out[2][3];
-    wire [63:0] mat_row3 = cell_data_out[3][0] + cell_data_out[3][1] + cell_data_out[3][2] + cell_data_out[3][3];
-    assign mat_total = mat_row0 + mat_row1 + mat_row2 + mat_row3;
+    // ── Parameterized matrix total ──
+    integer mr, mc;
+    always_comb begin
+        mat_total = 64'd0;
+        for (mr = 0; mr < ROWS; mr = mr + 1)
+            for (mc = 0; mc < COLS; mc = mc + 1)
+                mat_total = mat_total + cell_data_out[mr][mc];
+    end
 
-    // ── Ready / Response handshake ──
-    // pim_ready asserted one cycle after ra_en to pipeline response
+    // ── Ready / Response ──
     logic ra_en_d1;
     always_ff @(posedge ra_clk or negedge ra_rst_n) begin
-        if (!ra_rst_n) ra_en_d1 <= 1'b0;
-        else           ra_en_d1 <= ra_en;
+        if (!ra_rst_n) ra_en_d1 <= 1'b0; else ra_en_d1 <= ra_en;
     end
     assign pim_ready = ra_en_d1;
-    assign pim_resp  = 2'd0;   // always OK
+    assign pim_resp  = 2'd0;
+
+    // ── pim_flag: latched result-is-zero for control-flow branching ──
+    // Updates every cycle to track the most recent cell_data_out.
+    // Cell data is registered (non-blocking) → cell_data_out reflects the
+    // value AFTER the last ra_en compute, visible one cycle later.
+    // By the time the sequencer reaches SEQ_PC_UPDATE (2+ cycles after
+    // dispatch), pim_flag holds the correct post-compute zero-flag.
+    always_ff @(posedge ra_clk or negedge ra_rst_n) begin
+        if (!ra_rst_n) begin
+            pim_flag <= 1'b0;
+        end else begin
+            unique case (exec_mode)
+                2'b01:   pim_flag <= (cell_data_out[ra_addr[31:24]][ra_addr[23:16]] == 64'd0);
+                2'b10:   pim_flag <= (vec_sum[ra_addr[23:16]] == 64'd0);
+                2'b11:   pim_flag <= (mat_total == 64'd0);
+                default: pim_flag <= 1'b0;
+            endcase
+        end
+    end
 
 endmodule

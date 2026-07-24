@@ -24,7 +24,7 @@ module tb_cell_v2;
     logic [ 7:0] p_tag, q_tag;
     logic        pred_reg;
 
-    spl_pim_cell_v2 #(.IDX_ROW(1), .IDX_COL(2)) dut (
+    spl_pim_cell #(.IDX_ROW(1), .IDX_COL(2)) dut (
         .ra_clk(clk), .ra_rst_n(rst_n),
         .ra_op(op), .ra_data_in(data_in), .ra_data_out(data_out),
         .pim_store_en(store_en),
