@@ -136,7 +136,9 @@ module G1_Top_Integrated (
         .pim_resp(pim_array_resp),
         .vec_sum(pim_vec_sum),
         .mat_total(pim_mat_total),
-        .pim_flag(pim_flag_wire)
+        .pim_flag(pim_flag_wire),
+        .cell_state_obs_packed(),   // materica unit instantiated at testbench level
+        .cell_op_obs_packed()
     );
 
     assign pim_bus_rdata = pim_array_rdata;

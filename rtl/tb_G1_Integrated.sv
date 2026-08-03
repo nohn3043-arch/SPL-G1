@@ -17,6 +17,10 @@
 
 module tb_G1_Integrated;
 
+    // Materica test constants
+    localparam int PHASE_DECAY_CYCLES = 24;  // > PHASE_WINDOW(16) >> 3 = 2 decay threshold
+    localparam int DIR_THRESH         = 3;   // = DIR_VIOLATION_THRESH
+
     logic        clk, rst_n;
     logic        ra_valid;
     logic [ 1:0] ra_cmd;
@@ -38,6 +42,47 @@ module tb_G1_Integrated;
         .pim_state_stable, .logic_integrity_verified,
         .fuse_blown
     );
+
+    // ═══════════════════════════════════════════════
+    // Materica Compliance Unit — integration-level instance
+    // (v3.1: packed ports, iverilog-compatible)
+    // ═══════════════════════════════════════════════
+    logic        mc_ra_active;
+    logic [ 3:0] mc_src_id, mc_tgt_id;
+    logic [ 1:0] mc_dir;
+    logic        mc_phys_temp, mc_phys_volt, mc_phys_rad, mc_sec_bnd;
+    logic        mc_compliant;
+    logic [ 3:0] mc_status;
+    logic        mc_fuse;
+    logic        mc_fuse_latched;
+
+    wire [4*4*64-1:0] mc_cell_states_packed = dut.u_pim_array.cell_state_obs_packed;
+
+    materica_compliance_unit #(
+        .CELL_ROWS(4),
+        .CELL_COLS(4)
+    ) u_materica (
+        .clk, .rst_n,
+        .cell_states_packed(mc_cell_states_packed),
+        .cell_ops_packed(dut.u_pim_array.cell_op_obs_packed),
+        .ra_transaction_active(mc_ra_active),
+        .ra_source_id(mc_src_id),
+        .ra_target_id(mc_tgt_id),
+        .ra_direction(mc_dir),
+        .ra_addr(ra_addr),
+        .phys_temp_alarm(mc_phys_temp),
+        .phys_volt_alarm(mc_phys_volt),
+        .phys_rad_alarm(mc_phys_rad),
+        .sec_boundary_intact(mc_sec_bnd),
+        .materica_compliant(mc_compliant),
+        .compliance_status(mc_status),
+        .fuse_trigger(mc_fuse)
+    );
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) mc_fuse_latched <= 1'b0;
+        else if (mc_fuse) mc_fuse_latched <= 1'b1;
+    end
 
     // Local G1_IDENTITY for test (must match G1_Top_Integrated)
     localparam [255:0] TEST_ID = 256'h8525D007_59A4_CA22_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
@@ -301,6 +346,101 @@ module tb_G1_Integrated;
             $display("[PASS] fuse_blown remains 0 (no constraint violation in bridge mode)");
         else begin
             $display("[FAIL] fuse_blown unexpectedly set");
+            errors = errors + 1;
+        end
+
+        $display("");
+
+        // ═══════════════════════════════════════════
+        // Test 8: Materica Compliance — Physical-Layer Audit (v3.1)
+        // ═══════════════════════════════════════════
+        $display("--- Test 8: Materica Compliance (4 gates) ---");
+
+        // Defaults: all sensors safe, boundary intact
+        mc_ra_active = 0; mc_src_id = 4'd0; mc_tgt_id = 4'd1; mc_dir = 2'b00;
+        mc_phys_temp = 0; mc_phys_volt = 0; mc_phys_rad = 0; mc_sec_bnd = 1;
+        repeat(10) @(posedge clk);
+
+        // 8a: All-clear baseline
+        if (mc_compliant === 1'b1 && mc_status == 4'b1111)
+            $display("[PASS] 8a: baseline compliant (status=4'b1111)");
+        else begin
+            $display("[FAIL] 8a: baseline status=%b compliant=%b", mc_status, mc_compliant);
+            errors = errors + 1;
+        end
+
+        // 8b: Materica #1 — phase instability (NOP with state change)
+        // Force a state flip on cell (0,0) while op stays NOP → phase counter decays
+        // iverilog can't force hierarchical part-selects; drive via ra-write NOP ops
+        // with the array's cell state changing is not possible through the RTL,
+        // so instead verify #1 stays PASS under normal operation, and test the
+        // decay path in the standalone unit testbench (tb_materica_compliance.sv).
+        mc_ra_active = 0;
+        repeat(20) @(posedge clk);
+        if (mc_status[0] === 1'b1)
+            $display("[PASS] 8b: Materica #1 stable under normal operation (status[0]=1)");
+        else begin
+            $display("[FAIL] 8b: phase monitor false-positive (status=%b)", mc_status);
+            errors = errors + 1;
+        end
+
+        // 8c: Materica #2 — directional violation (CONFIG source≠target)
+        // Reset phase monitor by full reset of the materica unit
+        mc_ra_active = 0;
+        repeat(2) @(posedge clk);
+        mc_ra_active = 1; mc_dir = 2'b11; mc_src_id = 4'd2; mc_tgt_id = 4'd5;
+        repeat(DIR_THRESH + 2) @(posedge clk);
+        mc_ra_active = 0;
+        repeat(2) @(posedge clk);
+        if (mc_status[1] === 1'b0)
+            $display("[PASS] 8c: Materica #2 directional violation detected (status[1]=0)");
+        else begin
+            $display("[FAIL] 8c: directional violation not detected (status=%b)", mc_status);
+            errors = errors + 1;
+        end
+
+        // 8d: Materica #3 — PIM proximity (OOB address = plane breach)
+        ra_addr = 32'hFF_FF_0000;   // row 0xFF >= 4 → OOB
+        mc_ra_active = 1; mc_dir = 2'b00; mc_src_id = 4'd0; mc_tgt_id = 4'd1;
+        repeat(2) @(posedge clk);
+        mc_ra_active = 0;
+        ra_addr = 32'd0;
+        repeat(2) @(posedge clk);
+        if (mc_status[2] === 1'b0)
+            $display("[PASS] 8d: Materica #3 OOB plane breach detected (status[2]=0)");
+        else begin
+            $display("[FAIL] 8d: OOB not detected (status=%b)", mc_status);
+            errors = errors + 1;
+        end
+
+        // 8e: Materica #4 — SBC physical attack (temperature)
+        mc_phys_temp = 1;
+        repeat(2) @(posedge clk);
+        mc_phys_temp = 0;
+        if (mc_status[3] === 1'b0)
+            $display("[PASS] 8e: Materica #4 temperature attack detected (status[3]=0)");
+        else begin
+            $display("[FAIL] 8e: temp attack not detected (status=%b)", mc_status);
+            errors = errors + 1;
+        end
+
+        // 8f: fuse trigger — any single gate FAIL latches permanent lock
+        mc_phys_volt = 1;   // one more attack to keep #4 failing
+        repeat(2) @(posedge clk);
+        if (mc_fuse === 1'b1 || mc_fuse_latched === 1'b1)
+            $display("[PASS] 8f: fuse_trigger asserted on physical violation");
+        else begin
+            $display("[FAIL] 8f: fuse not triggered");
+            errors = errors + 1;
+        end
+        mc_phys_volt = 0;
+
+        // 8g: irreversibility — after reset of unit, fuse stays latched until rst
+        repeat(5) @(posedge clk);
+        if (mc_fuse_latched === 1'b1)
+            $display("[PASS] 8g: fuse latch persists (irreversible)");
+        else begin
+            $display("[FAIL] 8g: fuse latch cleared unexpectedly");
             errors = errors + 1;
         end
 

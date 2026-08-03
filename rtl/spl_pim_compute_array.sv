@@ -36,7 +36,14 @@ module spl_pim_compute_array #(
     output logic [63:0]           vec_sum   [COLS-1:0],
     output logic [63:0]           mat_total,
 
-    output logic                  pim_flag    // v4: result-is-zero flag (latched, for control flow)
+    output logic                  pim_flag,    // v4: result-is-zero flag (latched, for control flow)
+
+    // ── Materica compliance observation ports (v3.1) ──
+    // PACKED vectors (iverilog-compatible across module boundaries):
+    //   cell_state_obs_packed[ROWS*COLS*64-1:0]
+    //   cell_op_obs_packed[ROWS*COLS*5-1:0]
+    output logic [ROWS*COLS*64-1:0] cell_state_obs_packed,
+    output logic [ROWS*COLS*5 -1:0] cell_op_obs_packed
 );
 
     logic [63:0] cell_data_out [ROWS-1:0][COLS-1:0];
@@ -49,21 +56,44 @@ module spl_pim_compute_array #(
     assign cell_op = pim_op[4:0];
 
     // ── Row/col decode ──
+    // Note: iverilog (vvp) does not support variable selects on unpacked
+    // arrays in always_* processes. Use generate loops instead.
     logic [ROWS-1:0] row_sel;
     logic [COLS-1:0] col_sel;
+    logic [7:0] sel_row_idx;
+    logic [7:0] sel_col_idx;
+    assign sel_row_idx = ra_addr[31:24];
+    assign sel_col_idx = ra_addr[23:16];
 
-    always_comb begin
-        row_sel = {ROWS{1'b0}};
-        col_sel = {COLS{1'b0}};
-        if (ra_en) begin
-            case (exec_mode)
-                2'b01: begin row_sel[ra_addr[31:24]] = 1'b1; col_sel[ra_addr[23:16]] = 1'b1; end
-                2'b10: begin row_sel = {ROWS{1'b1}};        col_sel[ra_addr[23:16]] = 1'b1; end
-                2'b11: begin row_sel = {ROWS{1'b1}};        col_sel = {COLS{1'b1}};        end
-                default: ;
-            endcase
+    genvar dr, dc;
+    generate
+        for (dr = 0; dr < ROWS; dr = dr + 1) begin : gen_row_sel
+            always_comb begin
+                row_sel[dr] = 1'b0;
+                if (ra_en) begin
+                    case (exec_mode)
+                        2'b01: if (dr == sel_row_idx) row_sel[dr] = 1'b1;
+                        2'b10: row_sel[dr] = 1'b1;
+                        2'b11: row_sel[dr] = 1'b1;
+                        default: ;
+                    endcase
+                end
+            end
         end
-    end
+        for (dc = 0; dc < COLS; dc = dc + 1) begin : gen_col_sel
+            always_comb begin
+                col_sel[dc] = 1'b0;
+                if (ra_en) begin
+                    case (exec_mode)
+                        2'b01: if (dc == sel_col_idx) col_sel[dc] = 1'b1;
+                        2'b10: if (dc == sel_col_idx) col_sel[dc] = 1'b1;
+                        2'b11: col_sel[dc] = 1'b1;
+                        default: ;
+                    endcase
+                end
+            end
+        end
+    endgenerate
 
     // ── Cell instantiation (v2) ──
     wire cell_pred_en = (exec_mode == 2'b01);
@@ -109,11 +139,23 @@ module spl_pim_compute_array #(
         end
     endgenerate
 
-    // ── SCALAR readback ──
+    // ── SCALAR readback (generate-based, no variable select on arrays) ──
+    logic [63:0] rd_cell [ROWS-1:0][COLS-1:0];
+    genvar rr, rc;
+    generate
+        for (rr = 0; rr < ROWS; rr = rr + 1) begin : gen_rd_r
+            for (rc = 0; rc < COLS; rc = rc + 1) begin : gen_rd_c
+                assign rd_cell[rr][rc] = (ra_en && exec_mode == 2'b01 &&
+                                          rr == sel_row_idx && rc == sel_col_idx)
+                                         ? cell_data_out[rr][rc] : 64'h0;
+            end
+        end
+    endgenerate
     always_comb begin
         ra_rdata = 64'h0;
-        if (ra_en && exec_mode == 2'b01)
-            ra_rdata = cell_data_out[ra_addr[31:24]][ra_addr[23:16]];
+        for (integer rdi = 0; rdi < ROWS; rdi = rdi + 1)
+            for (integer rdj = 0; rdj < COLS; rdj = rdj + 1)
+                ra_rdata = ra_rdata | rd_cell[rdi][rdj];
     end
 
     // ── Parameterized vector sum (per column) ──
@@ -147,19 +189,35 @@ module spl_pim_compute_array #(
     assign pim_ready = ra_en_d1;
     assign pim_resp  = 2'd0;
 
+    // ── Materica observation fan-out (packed) ──
+    genvar mo_r, mo_c;
+    generate
+        for (mo_r = 0; mo_r < ROWS; mo_r = mo_r + 1) begin : gen_mat_obs_r
+            for (mo_c = 0; mo_c < COLS; mo_c = mo_c + 1) begin : gen_mat_obs_c
+                assign cell_state_obs_packed[((mo_r*COLS+mo_c)+1)*64-1 -: 64] = cell_data_out[mo_r][mo_c];
+                assign cell_op_obs_packed[((mo_r*COLS+mo_c)+1)*5 -1 -: 5]    = cell_op;
+            end
+        end
+    endgenerate
+
     // ── pim_flag: latched result-is-zero for control-flow branching ──
-    // Updates every cycle to track the most recent cell_data_out.
-    // Cell data is registered (non-blocking) → cell_data_out reflects the
-    // value AFTER the last ra_en compute, visible one cycle later.
-    // By the time the sequencer reaches SEQ_PC_UPDATE (2+ cycles after
-    // dispatch), pim_flag holds the correct post-compute zero-flag.
+    // Uses generate-based scalar readback (rd_cell) to avoid variable
+    // selects on unpacked arrays (iverilog limitation).
+    logic [63:0] flag_cell_val;
+    always_comb begin
+        flag_cell_val = 64'h0;
+        for (integer fdi = 0; fdi < ROWS; fdi = fdi + 1)
+            for (integer fdj = 0; fdj < COLS; fdj = fdj + 1)
+                flag_cell_val = flag_cell_val | rd_cell[fdi][fdj];
+    end
+
     always_ff @(posedge ra_clk or negedge ra_rst_n) begin
         if (!ra_rst_n) begin
             pim_flag <= 1'b0;
         end else begin
             unique case (exec_mode)
-                2'b01:   pim_flag <= (cell_data_out[ra_addr[31:24]][ra_addr[23:16]] == 64'd0);
-                2'b10:   pim_flag <= (vec_sum[ra_addr[23:16]] == 64'd0);
+                2'b01:   pim_flag <= (flag_cell_val == 64'd0);
+                2'b10:   pim_flag <= (vec_sum[sel_col_idx] == 64'd0);
                 2'b11:   pim_flag <= (mat_total == 64'd0);
                 default: pim_flag <= 1'b0;
             endcase
