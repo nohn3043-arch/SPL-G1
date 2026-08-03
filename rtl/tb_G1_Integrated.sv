@@ -20,13 +20,14 @@ module tb_G1_Integrated;
     // Materica test constants
     localparam int PHASE_DECAY_CYCLES = 24;  // > PHASE_WINDOW(16) >> 3 = 2 decay threshold
     localparam int DIR_THRESH         = 3;   // = DIR_VIOLATION_THRESH
+    localparam int DATA_W             = 128; // v3: expanded data width
 
     logic        clk, rst_n;
     logic        ra_valid;
     logic [ 1:0] ra_cmd;
     logic [31:0] ra_addr;
-    logic [63:0] ra_wdata;
-    logic [63:0] ra_rdata;
+    logic [DATA_W-1:0] ra_wdata;
+    logic [DATA_W-1:0] ra_rdata;
     logic        ra_ready;
     logic [ 1:0] ra_resp;
     logic [255:0] hw_hash;
@@ -34,7 +35,7 @@ module tb_G1_Integrated;
     logic        logic_integrity_verified;
     logic        fuse_blown;
 
-    G1_Top_Integrated dut (
+    G1_Top_Integrated #(.DATA_W(DATA_W)) dut (
         .clk, .rst_n,
         .ra_valid, .ra_cmd, .ra_addr, .ra_wdata,
         .ra_rdata, .ra_ready, .ra_resp,
@@ -56,11 +57,12 @@ module tb_G1_Integrated;
     logic        mc_fuse;
     logic        mc_fuse_latched;
 
-    wire [4*4*64-1:0] mc_cell_states_packed = dut.u_pim_array.cell_state_obs_packed;
+    wire [16*16*128-1:0] mc_cell_states_packed = dut.u_pim_array.cell_state_obs_packed;
 
     materica_compliance_unit #(
-        .CELL_ROWS(4),
-        .CELL_COLS(4)
+        .CELL_ROWS(16),
+        .CELL_COLS(16),
+        .CELL_DATA_W(128)
     ) u_materica (
         .clk, .rst_n,
         .cell_states_packed(mc_cell_states_packed),

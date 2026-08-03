@@ -16,7 +16,9 @@
 // License: SPL-G1 dual-track (see LICENSE)
 // ============================================================================
 
-module G1_Top_Integrated (
+module G1_Top_Integrated #(
+    parameter int DATA_W = 128        // v3: RA-BUS data width (64=legacy, 128=expanded)
+) (
     input  logic         clk,
     input  logic         rst_n,
 
@@ -24,8 +26,8 @@ module G1_Top_Integrated (
     input  logic         ra_valid,
     input  logic [ 1:0]  ra_cmd,
     input  logic [31:0]  ra_addr,
-    input  logic [63:0]  ra_wdata,
-    output logic [63:0]  ra_rdata,
+    input  logic [DATA_W-1:0] ra_wdata,
+    output logic [DATA_W-1:0] ra_rdata,
     output logic         ra_ready,
     output logic [ 1:0]  ra_resp,
 
@@ -42,8 +44,8 @@ module G1_Top_Integrated (
 
     localparam [255:0] G1_IDENTITY  = 256'h8525D007_59A4_CA22_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     localparam int      HASH_CYCLES = 64;
-    localparam int      PIM_ROWS    = 4;
-    localparam int      PIM_COLS    = 4;
+    localparam int      PIM_ROWS    = 16;   // v3: expanded 4x4 → 16x16
+    localparam int      PIM_COLS    = 16;   // v3: expanded 4x4 → 16x16
 
     // ═══════════════════════════════════════════════
     // RA-BUS Arbiter → Target signals
@@ -51,16 +53,16 @@ module G1_Top_Integrated (
     logic        pim_bus_valid, audit_bus_valid, id_bus_valid, ext_bus_valid;
     logic [1:0]  pim_bus_cmd,   audit_bus_cmd,   id_bus_cmd,   ext_bus_cmd;
     logic [27:0] pim_bus_addr,  audit_bus_addr,  id_bus_addr,  ext_bus_addr;
-    logic [63:0] pim_bus_wdata, audit_bus_wdata, id_bus_wdata, ext_bus_wdata;
+    logic [DATA_W-1:0] pim_bus_wdata, audit_bus_wdata, id_bus_wdata, ext_bus_wdata;
     logic        pim_bus_store;
-    logic [63:0] pim_bus_rdata, audit_bus_rdata, id_bus_rdata, ext_bus_rdata;
+    logic [DATA_W-1:0] pim_bus_rdata, audit_bus_rdata, id_bus_rdata, ext_bus_rdata;
     logic        pim_bus_ready, audit_bus_ready, id_bus_ready, ext_bus_ready;
     logic [1:0]  pim_bus_resp,  audit_bus_resp,  id_bus_resp,  ext_bus_resp;
 
     // Internal RA-BUS readback (before fuse override)
-    wire [63:0] ra_rdata_int;
+    wire [DATA_W-1:0] ra_rdata_int;
 
-    ra_bus_arbiter u_arbiter (
+    ra_bus_arbiter #(.DATA_W(DATA_W)) u_arbiter (
         .clk, .rst_n,
         .ra_valid, .ra_cmd, .ra_addr, .ra_wdata,
         .ra_rdata(ra_rdata_int), .ra_ready, .ra_resp,
@@ -84,13 +86,13 @@ module G1_Top_Integrated (
     logic        seq_busy, seq_done, seq_error;
     logic        pim_en, seq_audit_dispatch;
     logic [31:0] pim_seq_addr;
-    logic [63:0] pim_seq_wdata;
+    logic [DATA_W-1:0] pim_seq_wdata;
     logic [ 7:0] pim_seq_op;
     logic [ 1:0] exec_mode;
     logic [ 7:0] seq_p_tag, seq_q_tag;
     logic        pim_flag_wire;   // v4: PIM→sequencer zero-flag
 
-    spl_pim_sequencer u_sequencer (
+    spl_pim_sequencer #(.PROG_DEPTH(1024), .DATA_W(DATA_W)) u_sequencer (
         .clk, .rst_n,
         .ra_cmd_valid(pim_bus_valid),
         .ra_cmd(pim_bus_cmd),
@@ -113,15 +115,15 @@ module G1_Top_Integrated (
     // ═══════════════════════════════════════════════
     // PIM Compute Array v2 (cell_v2 + parameterized + 8-bit neighbour)
     // ═══════════════════════════════════════════════
-    logic [63:0] pim_array_rdata;
+    logic [DATA_W-1:0] pim_array_rdata;
     logic        pim_array_ready;
     logic [1:0]  pim_array_resp;
     logic [ 7:0] pim_p_tags [PIM_ROWS-1:0][PIM_COLS-1:0];
     logic [ 7:0] pim_q_tags [PIM_ROWS-1:0][PIM_COLS-1:0];
-    logic [63:0] pim_vec_sum [PIM_COLS-1:0];
-    logic [63:0] pim_mat_total;
+    logic [DATA_W-1:0] pim_vec_sum [PIM_COLS-1:0];
+    logic [DATA_W-1:0] pim_mat_total;
 
-    spl_pim_compute_array #(.ROWS(PIM_ROWS), .COLS(PIM_COLS)) u_pim_array (
+    spl_pim_compute_array #(.ROWS(PIM_ROWS), .COLS(PIM_COLS), .DATA_W(DATA_W)) u_pim_array (
         .ra_clk(clk), .ra_rst_n(rst_n),
         .ra_en(pim_en),
         .ra_addr(pim_seq_addr),
@@ -161,18 +163,32 @@ module G1_Top_Integrated (
     //   [191:128] constraint_bits = 64'hFFFF_FFFF_FFFF_FFFF (all pass)
     //   [127:64]  weight_q16_16   = 64'h0 (bridge)
     //   [63:0]    unused
+    //
+    // v3 (16x16): 256 cells can't fit in 56-bit dep_mask.
+    // Quadrant-aggregation: each of the 4 audit units covers one 8x8
+    // quadrant; within a quadrant, 64 cells' P-tags are XOR-folded into
+    // a 14-bit fingerprint (56/4). Lossy aggregation — full 256-bit
+    // dep_mask deferred to Phase A5 (NOMOS constraint rules).
+    genvar qr, qc;
+    logic [13:0] quad_dep [0:3];
+    generate
+        for (qr = 0; qr < 2; qr = qr + 1) begin : gen_quad_r
+            for (qc = 0; qc < 2; qc = qc + 1) begin : gen_quad_c
+                logic [13:0] quad_acc;
+                integer qi, qj;
+                always_comb begin
+                    quad_acc = 14'd0;
+                    for (qi = 0; qi < PIM_ROWS/2; qi = qi + 1)
+                        for (qj = 0; qj < PIM_COLS/2; qj = qj + 1)
+                            quad_acc = quad_acc ^ pim_p_tags[qr*(PIM_ROWS/2)+qi][qc*(PIM_COLS/2)+qj][5:0];
+                end
+                assign quad_dep[qr*2+qc] = quad_acc;
+            end
+        end
+    endgenerate
+
     wire [55:0] dep_mask_bits;   // 56-bit exactly for [247:192]
-    assign dep_mask_bits = {
-        9'h0,                       // pad to 56 bits
-        pim_p_tags[0][0][5:0],      // 6 bits
-        pim_p_tags[0][1][5:0],      // 6 bits
-        pim_p_tags[0][2][5:0],      // 6 bits
-        pim_p_tags[0][3][5:0],      // 6 bits
-        pim_p_tags[1][0][5:0],      // 6 bits
-        pim_p_tags[1][1][5:0],      // 6 bits
-        pim_p_tags[1][2][5:0],      // 6 bits
-        pim_p_tags[1][3][4:0]       // 5 bits  → total 9+47 = 56
-    };
+    assign dep_mask_bits = { quad_dep[0], quad_dep[1], quad_dep[2], quad_dep[3] };
 
     assign audit_p = {
         8'h00,                          // rule_id          [255:248]
@@ -184,9 +200,8 @@ module G1_Top_Integrated (
 
     assign audit_q = {
         192'h0,
-        pim_q_tags[0][0], pim_q_tags[0][1], pim_q_tags[0][2], pim_q_tags[0][3],
-        pim_q_tags[1][0], pim_q_tags[1][1], pim_q_tags[1][2], pim_q_tags[1][3]
-    };
+        quad_dep[0], quad_dep[1], quad_dep[2], quad_dep[3]
+    };  // 192 + 56 = 248 ≤ 256
 
     assign dispatch_valid = seq_audit_dispatch;   // v3: per-op dispatch, not batch seq_done
 
@@ -243,11 +258,24 @@ module G1_Top_Integrated (
     assign id_bus_resp   = 2'd0;
 
     // ═══════════════════════════════════════════════
-    // External expansion (target 3) — stub
+    // External Memory Controller (target 3) — 16MB SRAM + DMA + AXI4
     // ═══════════════════════════════════════════════
-    assign ext_bus_rdata = 64'hDEAD_0000_0000_BEEF;
-    assign ext_bus_ready = 1'b1;
-    assign ext_bus_resp  = 2'd1;
+    ext_mem_controller #(.DATA_W(DATA_W)) u_ext_mem (
+        .clk, .rst_n,
+        .ra_valid(ext_bus_valid), .ra_cmd(ext_bus_cmd), .ra_addr(ext_bus_addr),
+        .ra_wdata(ext_bus_wdata), .ra_rdata(ext_bus_rdata),
+        .ra_ready(ext_bus_ready), .ra_resp(ext_bus_resp),
+        // AXI4 master interface (tied off for simulation; connect to PHY in synthesis)
+        .axi_awvalid(), .axi_awready(1'b0), .axi_awaddr(), .axi_awlen(),
+        .axi_awsize(), .axi_awburst(), .axi_awid(),
+        .axi_wvalid(), .axi_wready(1'b0), .axi_wdata(), .axi_wstrb(), .axi_wlast(),
+        .axi_bvalid(1'b0), .axi_bready(), .axi_bresp(2'd0), .axi_bid('0),
+        .axi_arvalid(), .axi_arready(1'b0), .axi_araddr(), .axi_arlen(),
+        .axi_arsize(), .axi_arburst(), .axi_arid(),
+        .axi_rvalid(1'b0), .axi_rready(), .axi_rdata('0), .axi_rresp(2'd0),
+        .axi_rlast(1'b0), .axi_rid('0),
+        .dma_busy(), .dma_done()
+    );
 
     // ═══════════════════════════════════════════════
     // SBC Fuse — Materica #4 Security Boundary Controller
@@ -269,6 +297,6 @@ module G1_Top_Integrated (
     assign pim_state_stable = (&unit_valids) && !seq_busy && !fuse_blown;
 
     // Fuse-blown output override: force rdata to zero
-    assign ra_rdata = fuse_blown ? 64'h0 : ra_rdata_int;
+    assign ra_rdata = fuse_blown ? {DATA_W{1'b0}} : ra_rdata_int;
 
 endmodule

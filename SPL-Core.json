@@ -1,7 +1,53 @@
 {
   "architecture": "SPL-Core-G1",
-  "version": "0.2.0",
+  "version": "1.0.0-Commercial",
   "logic_mode": "Second-Perspective",
+  "commercial_config": {
+    "tile_rows": 64,
+    "tile_cols": 64,
+    "total_tiles": 4096,
+    "units_per_tile": 256,
+    "total_pim_units": 1048576,
+    "total_onchip_sram_bytes": 16777216,
+    "peak_performance_tops": 256,
+    "clock_frequency_ghz": 1.0
+  },
+  "interconnect": {
+    "type": "2D Mesh NoC",
+    "routing": "XY dimension-order",
+    "virtual_channels": 2,
+    "router_ports": 5
+  },
+  "host_interface": {
+    "type": "PCIe Gen5 x16 / CXL 2.0",
+    "bar0_aperture_mb": 256,
+    "dma_supported": true,
+    "interrupts": true
+  },
+  "memory_interface": {
+    "type": "AXI4",
+    "dram_channels": 8,
+    "dram_capacity_gb": 64,
+    "bandwidth_gbps": 409.6
+  },
+  "pim_array_per_tile": {
+    "rows": 16,
+    "cols": 16,
+    "total_units": 256,
+    "local_storage_per_unit_bits": 128,
+    "sram_per_tile_bytes": 4096
+  },
+  "external_memory": {
+    "sram_model_bytes": 16777216,
+    "dma_supported": true,
+    "axi4_interface": true
+  },
+  "sequencer": {
+    "prog_depth": 1024,
+    "return_stack_depth": 8,
+    "control_flow_supported": true,
+    "distributed_sequencers": true
+  },
   "anchor_identity": "0x8525d007_59a4ca22-Universal-Clock-Sync",
   "instructions": [
     {

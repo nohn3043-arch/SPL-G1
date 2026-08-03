@@ -22,6 +22,7 @@
 module materica_compliance_unit #(
     parameter int CELL_ROWS     = 4,
     parameter int CELL_COLS     = 4,
+    parameter int CELL_DATA_W   = 64,    // v3: per-cell data width (64=legacy, 128=expanded)
     parameter int PHASE_WINDOW  = 16,     // Materica #1: 状态保持监测窗口（周期）
     parameter int DIR_VIOLATION_THRESH = 3 // Materica #2: 方向违规阈值
 ) (
@@ -31,7 +32,7 @@ module materica_compliance_unit #(
     // ─── Materica #1: Binary Phase Constraint ───
     // PACKED cell state/op vectors: [CELL_ROWS*CELL_COLS*W-1:0]
     // Bit layout: cell (r,c) occupies [((r*COLS+c)+1)*W-1 : (r*COLS+c)*W]
-    input  logic [CELL_ROWS*CELL_COLS*64-1:0] cell_states_packed,
+    input  logic [CELL_ROWS*CELL_COLS*CELL_DATA_W-1:0] cell_states_packed,
     input  logic [CELL_ROWS*CELL_COLS*5 -1:0] cell_ops_packed,
 
     // ─── Materica #2: Directional Signal ───
@@ -59,14 +60,14 @@ module materica_compliance_unit #(
     // ═══════════════════════════════════════════════
     // Packed → unpacked unpack (generate, constant indices only)
     // ═══════════════════════════════════════════════
-    logic [63:0] cell_state [CELL_ROWS-1:0][CELL_COLS-1:0];
+    logic [CELL_DATA_W-1:0] cell_state [CELL_ROWS-1:0][CELL_COLS-1:0];
     logic [ 4:0] cell_op    [CELL_ROWS-1:0][CELL_COLS-1:0];
 
     genvar ur, uc;
     generate
         for (ur = 0; ur < CELL_ROWS; ur = ur + 1) begin : gen_unpack_r
             for (uc = 0; uc < CELL_COLS; uc = uc + 1) begin : gen_unpack_c
-                assign cell_state[ur][uc] = cell_states_packed[((ur*CELL_COLS+uc)+1)*64-1 -: 64];
+                assign cell_state[ur][uc] = cell_states_packed[((ur*CELL_COLS+uc)+1)*CELL_DATA_W-1 -: CELL_DATA_W];
                 assign cell_op[ur][uc]    = cell_ops_packed[((ur*CELL_COLS+uc)+1)*5 -1 -: 5];
             end
         end
@@ -79,7 +80,7 @@ module materica_compliance_unit #(
     // 实现：每 cell 滑动窗口，NOP 但状态变化 → 稳定性计数右移（衰减）。
     logic        phase_violation;
     logic [PHASE_WINDOW-1:0] phase_counter [CELL_ROWS-1:0][CELL_COLS-1:0];
-    logic [63:0] prev_state  [CELL_ROWS-1:0][CELL_COLS-1:0];
+    logic [CELL_DATA_W-1:0] prev_state  [CELL_ROWS-1:0][CELL_COLS-1:0];
 
     integer pi, pj;
     always_ff @(posedge clk or negedge rst_n) begin
@@ -87,7 +88,7 @@ module materica_compliance_unit #(
             phase_violation <= 1'b0;
             for (pi = 0; pi < CELL_ROWS; pi = pi + 1)
                 for (pj = 0; pj < CELL_COLS; pj = pj + 1) begin
-                    prev_state[pi][pj] <= 64'h0;
+                    prev_state[pi][pj] <= {CELL_DATA_W{1'b0}};
                     phase_counter[pi][pj] <= {PHASE_WINDOW{1'b1}};
                 end
         end else begin

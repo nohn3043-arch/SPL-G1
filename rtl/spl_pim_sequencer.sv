@@ -22,7 +22,8 @@
 
 module spl_pim_sequencer #(
     parameter int PROG_DEPTH = 256,
-    parameter int RET_STACK_DEPTH = 8
+    parameter int RET_STACK_DEPTH = 8,
+    parameter int DATA_W = 64        // v3: data width (64=legacy, 128=expanded)
 ) (
     input  logic         clk,
     input  logic         rst_n,
@@ -31,7 +32,7 @@ module spl_pim_sequencer #(
     input  logic         ra_cmd_valid,
     input  logic [ 1:0]  ra_cmd,           // 00:READ 01:WRITE 10:EXECUTE 11:CONFIG
     input  logic [31:0]  ra_addr,
-    input  logic [63:0]  ra_wdata,
+    input  logic [DATA_W-1:0] ra_wdata,
 
     // ── Causal audit feedback (v3: closed loop) ──
     input  logic         audit_done,        // causal unit finished checking this op
@@ -48,7 +49,7 @@ module spl_pim_sequencer #(
     // ── PIM array drive ──
     output logic         pim_en,            // array enable (pulses per op)
     output logic [31:0]  pim_addr,          // ra_addr passthrough
-    output logic [63:0]  pim_wdata,         // operand
+    output logic [DATA_W-1:0] pim_wdata,    // operand
     output logic [ 7:0]  pim_op,            // micro-op
     output logic [ 1:0]  exec_mode,         // SCALAR / VECTOR / MATRIX
 
@@ -203,7 +204,7 @@ module spl_pim_sequencer #(
         pim_en          = 1'b0;
         pim_op          = 8'h00;
         pim_addr        = 32'h0;
-        pim_wdata       = 64'h0;
+        pim_wdata       = {DATA_W{1'b0}};
         exec_mode       = 2'b00;
         seq_busy        = 1'b0;
         seq_done        = 1'b0;

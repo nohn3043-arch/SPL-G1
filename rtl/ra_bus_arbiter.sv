@@ -23,7 +23,8 @@
 // ============================================================================
 
 module ra_bus_arbiter #(
-    parameter int TARGETS = 4
+    parameter int TARGETS = 4,
+    parameter int DATA_W  = 64        // v3: RA-BUS data width (64=legacy, 128=expanded)
 ) (
     // Host side (RA-BUS external)
     input  logic        clk,
@@ -31,8 +32,8 @@ module ra_bus_arbiter #(
     input  logic        ra_valid,
     input  logic [1:0]  ra_cmd,          // READ/WRITE/EXECUTE/CONFIG
     input  logic [31:0] ra_addr,         // [31:28]=target, [27:0]=offset
-    input  logic [63:0] ra_wdata,
-    output logic [63:0] ra_rdata,
+    input  logic [DATA_W-1:0] ra_wdata,
+    output logic [DATA_W-1:0] ra_rdata,
     output logic        ra_ready,
     output logic [1:0]  ra_resp,         // OK/ERROR/AUDIT_HALT/RETRY
 
@@ -40,9 +41,9 @@ module ra_bus_arbiter #(
     output logic        pim_valid,
     output logic [1:0]  pim_cmd,
     output logic [27:0] pim_addr,
-    output logic [63:0] pim_wdata,
+    output logic [DATA_W-1:0] pim_wdata,
     output logic        pim_store,
-    input  logic [63:0] pim_rdata,
+    input  logic [DATA_W-1:0] pim_rdata,
     input  logic        pim_ready,
     input  logic [1:0]  pim_resp,
 
@@ -50,8 +51,8 @@ module ra_bus_arbiter #(
     output logic        audit_valid,
     output logic [1:0]  audit_cmd,
     output logic [27:0] audit_addr,
-    output logic [63:0] audit_wdata,
-    input  logic [63:0] audit_rdata,
+    output logic [DATA_W-1:0] audit_wdata,
+    input  logic [DATA_W-1:0] audit_rdata,
     input  logic        audit_ready,
     input  logic [1:0]  audit_resp,
 
@@ -59,8 +60,8 @@ module ra_bus_arbiter #(
     output logic        id_valid,
     output logic [1:0]  id_cmd,
     output logic [27:0] id_addr,
-    output logic [63:0] id_wdata,
-    input  logic [63:0] id_rdata,
+    output logic [DATA_W-1:0] id_wdata,
+    input  logic [DATA_W-1:0] id_rdata,
     input  logic        id_ready,
     input  logic [1:0]  id_resp,
 
@@ -68,8 +69,8 @@ module ra_bus_arbiter #(
     output logic        ext_valid,
     output logic [1:0]  ext_cmd,
     output logic [27:0] ext_addr,
-    output logic [63:0] ext_wdata,
-    input  logic [63:0] ext_rdata,
+    output logic [DATA_W-1:0] ext_wdata,
+    input  logic [DATA_W-1:0] ext_rdata,
     input  logic        ext_ready,
     input  logic [1:0]  ext_resp
 );
@@ -110,7 +111,7 @@ module ra_bus_arbiter #(
             2'd1: begin ra_rdata = audit_rdata; ra_ready = audit_ready; ra_resp = audit_resp; end
             2'd2: begin ra_rdata = id_rdata;    ra_ready = id_ready;    ra_resp = id_resp; end
             2'd3: begin ra_rdata = ext_rdata;   ra_ready = ext_ready;   ra_resp = ext_resp; end
-            default: begin ra_rdata = 64'hBAD0_BAD0_BAD0_BAD0; ra_ready = 1'b1; ra_resp = 2'd1; end
+            default: begin ra_rdata = {(DATA_W){1'b1}}; ra_ready = 1'b1; ra_resp = 2'd1; end
         endcase
     end
 
