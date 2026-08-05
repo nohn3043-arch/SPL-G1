@@ -57,11 +57,11 @@ module tb_G1_Integrated;
     logic        mc_fuse;
     logic        mc_fuse_latched;
 
-    wire [16*16*128-1:0] mc_cell_states_packed = dut.u_pim_array.cell_state_obs_packed;
+    wire [64*64*128-1:0] mc_cell_states_packed = dut.u_pim_array.cell_state_obs_packed;
 
     materica_compliance_unit #(
-        .CELL_ROWS(16),
-        .CELL_COLS(16),
+        .CELL_ROWS(64),
+        .CELL_COLS(64),
         .CELL_DATA_W(128)
     ) u_materica (
         .clk, .rst_n,
@@ -538,6 +538,9 @@ module tb_G1_Integrated;
 
     initial begin
         $dumpfile("g1_integrated_wave.vcd");
+        // VCD dump off by default — set +define+DUMP_VCD to enable
+        `ifdef DUMP_VCD
         $dumpvars(0, tb_G1_Integrated);
+        `endif
     end
 endmodule

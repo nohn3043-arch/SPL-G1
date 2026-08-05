@@ -44,8 +44,8 @@ module G1_Top_Integrated #(
 
     localparam [255:0] G1_IDENTITY  = 256'h8525D007_59A4_CA22_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     localparam int      HASH_CYCLES = 64;
-    localparam int      PIM_ROWS    = 16;   // v3: expanded 4x4 → 16x16
-    localparam int      PIM_COLS    = 16;   // v3: expanded 4x4 → 16x16
+    localparam int      PIM_ROWS    = 64;   // v6: Phase B — commercial scale (4,096 units)
+    localparam int      PIM_COLS    = 64;   // v6: Phase B — commercial scale (4,096 units)
 
     // ═══════════════════════════════════════════════
     // RA-BUS Arbiter → Target signals
