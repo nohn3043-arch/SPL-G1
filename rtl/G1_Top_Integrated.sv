@@ -143,7 +143,7 @@ module G1_Top_Integrated #(
         .cell_op_obs_packed()
     );
 
-    assign pim_bus_rdata = pim_array_rdata;
+    assign pim_bus_rdata = fuse_blown ? {DATA_W{1'b0}} : pim_array_rdata;
     assign pim_bus_ready = seq_done;
     assign pim_bus_resp  = seq_error ? 2'd1 : 2'd0;
 
@@ -307,14 +307,15 @@ module G1_Top_Integrated #(
     // ═══════════════════════════════════════════════
     // SBC Fuse — Materica #4 Security Boundary Controller
     // ═══════════════════════════════════════════════
-    // Audit failure (audit_fb_done && !audit_fb_pass) → permanent logic lock.
-    // Once blown, all RA-BUS output data is forced to 0.
-    // Recovery: hardware reset (rst_n) only. Software/commands cannot clear.
+    // Audit failure → permanent output data path cut (PIM target only).
+    // Internal logic, audit pipeline, identity anchor remain fully intact.
+    // Audit logs / status / identity are readable even after fuse blown.
+    // Recovery: hardware reset (rst_n) only.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             fuse_blown <= 1'b0;
         end else if (audit_fb_done && !audit_fb_pass) begin
-            fuse_blown <= 1'b1;   // audit violation → permanent lock
+            fuse_blown <= 1'b1;   // audit violation → cut output data path
         end
     end
 
@@ -336,9 +337,11 @@ module G1_Top_Integrated #(
     // ═══════════════════════════════════════════════
     // Top-level status (fuse-aware)
     // ═══════════════════════════════════════════════
+    // fuse_blown cuts only PIM-data output; audit/identity remain readable.
+    // pim_state_stable goes 0 when fuse is blown (output data path is cut).
     assign pim_state_stable = (&unit_valids) && !seq_busy && !fuse_blown;
 
-    // Fuse-blown output override: force rdata to zero
-    assign ra_rdata = fuse_blown ? {DATA_W{1'b0}} : ra_rdata_int;
+    // ra_rdata: arbiter routes target → no override needed (per-target gated above)
+    assign ra_rdata = ra_rdata_int;
 
 endmodule
