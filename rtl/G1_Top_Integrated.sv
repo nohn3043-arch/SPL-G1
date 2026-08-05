@@ -148,13 +148,40 @@ module G1_Top_Integrated #(
     assign pim_bus_resp  = seq_error ? 2'd1 : 2'd0;
 
     // ═══════════════════════════════════════════════
-    // Causal Audit Array v2 (NOMOS constraint + dep_mask cascade)
+    // Causal Audit Array v2 (constraint check + dep_mask cascade)
     // ═══════════════════════════════════════════════
     logic [3:0] unit_valids;
     logic       dispatch_valid;
-    logic [3:0] check_dones, check_passes;       // v3: per-check handshake
-    logic       audit_fb_done, audit_fb_pass;    // v3: AND-reduced feedback to sequencer
+    logic [3:0] check_dones, check_passes;
+    logic       audit_fb_done, audit_fb_pass;
     logic [255:0] audit_p, audit_q;
+
+    // ═══════════════════════════════════════════════
+    // A5: Causal Constraint Rules v1
+    // ═══════════════════════════════════════════════
+    // audit_constraint_mask: 64-bit configurable constraint gate.
+    //   bit[0]: allow integer ALU  (ADD/SUB/MUL/CMP/SHIFT/LOGIC/NOP)
+    //   bit[1]: allow FP16 ops     (FP16_ADD/SUB/MUL/CMP/MAC)
+    //   bit[2]: allow VECTOR mode
+    //   bit[3]: allow MATRIX mode
+    //   bits[63:4]: reserved (always 1)
+    //   Default = all-1s (bridge mode, backward-compatible).
+    //   Program via CONFIG command with ra_addr[27:24] = 4'b0101 (constraint cfg).
+    logic [63:0] audit_constraint_mask;   // 1=allowed, 0=forbidden
+
+    // Per-op constraint_bits: gate based on opcode class
+    logic [63:0] constraint_bits_op;
+    wire is_fp16_op  = (pim_seq_op[4:0] >= 5'h13) && (pim_seq_op[4:0] <= 5'h17);
+    wire is_mat_mode = (exec_mode == 2'b11);
+    wire is_vec_mode = (exec_mode == 2'b10);
+
+    assign constraint_bits_op = {
+        60'hFFFF_FFFF_FFFFFFF,
+        audit_constraint_mask[3] || !is_mat_mode,       // bit[3]: MATRIX gate
+        audit_constraint_mask[2] || !is_vec_mode,       // bit[2]: VECTOR gate
+        audit_constraint_mask[1] || !is_fp16_op,        // bit[1]: FP16 gate
+        audit_constraint_mask[0]                        // bit[0]: integer ALU gate
+    };
 
     // Aggregate P→Q tags from PIM array into audit pipeline
     // Format for v2: exact 256-bit field-aligned causal_record
@@ -193,7 +220,7 @@ module G1_Top_Integrated #(
     assign audit_p = {
         8'h00,                          // rule_id          [255:248]
         dep_mask_bits,                  // dep_mask         [247:192]
-        64'hFFFF_FFFF_FFFF_FFFF,        // constraint_bits  [191:128]
+        constraint_bits_op,             // constraint_bits  [191:128] — A5: per-op gate
         64'h0,                          // weight_q16_16    [127:64]
         64'h0                           // pad              [63:0]
     };  // 8 + 56 + 64 + 64 + 64 = 256
@@ -288,6 +315,21 @@ module G1_Top_Integrated #(
             fuse_blown <= 1'b0;
         end else if (audit_fb_done && !audit_fb_pass) begin
             fuse_blown <= 1'b1;   // audit violation → permanent lock
+        end
+    end
+
+    // ═══════════════════════════════════════════════
+    // A5: Constraint Mask — Programmable class gate (Materica #1 chain)
+    // ═══════════════════════════════════════════════
+    // 64-bit: bit[i]=1 → operation class i is ALLOWED.
+    // Program via CONFIG on audit target with addr[27:24]=4'b0101.
+    // Default = all-1s (bridge mode, backward-compatible).
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            audit_constraint_mask <= 64'hFFFF_FFFF_FFFF_FFFF;
+        end else if (audit_bus_valid && audit_bus_cmd == 2'b11
+                     && audit_bus_addr[27:24] == 4'b0101) begin
+            audit_constraint_mask <= audit_bus_wdata;
         end
     end
 

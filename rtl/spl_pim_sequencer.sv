@@ -85,6 +85,7 @@ module spl_pim_sequencer #(
         SEQ_EXEC         = 3'b010,
         SEQ_AUDIT_WAIT   = 3'b011,   // v3: wait for causal unit response
         SEQ_PC_UPDATE    = 3'b110,   // v4: control-flow PC update (no PIM dispatch)
+        SEQ_READ         = 3'b111,   // v5: RA-BUS READ transaction
         SEQ_DONE         = 3'b100,
         SEQ_ERR          = 3'b101
     } seq_state_t;
@@ -159,6 +160,7 @@ module spl_pim_sequencer #(
             SEQ_IDLE: begin
                 if (ra_cmd_valid && ra_cmd == 2'b10)       next_state = SEQ_EXEC;
                 else if (ra_cmd_valid && ra_cmd == 2'b11)  next_state = SEQ_CONFIG;
+                else if (ra_cmd_valid && ra_cmd == 2'b00)  next_state = SEQ_READ;
             end
             SEQ_CONFIG: next_state = SEQ_DONE;
 
@@ -194,6 +196,7 @@ module spl_pim_sequencer #(
 
             SEQ_DONE:  next_state = SEQ_IDLE;
             SEQ_ERR:   next_state = SEQ_IDLE;
+            SEQ_READ:  next_state = SEQ_DONE;      // v5: single-cycle read → done
             default:   next_state = SEQ_IDLE;
         endcase
     end
@@ -255,6 +258,16 @@ module spl_pim_sequencer #(
             SEQ_ERR: begin
                 seq_error = 1'b1;
                 seq_done  = 1'b1;
+            end
+
+            SEQ_READ: begin
+                // v5: NOP on target cell → array outputs ra_rdata → bus readback
+                seq_busy   = 1'b1;
+                pim_en     = 1'b1;
+                pim_op     = 8'h00;      // NOP (read without store)
+                exec_mode  = 2'b01;      // SCALAR: single-cell read
+                pim_addr   = ra_addr;
+                pim_wdata   = 64'h0;     // no store
             end
         endcase
     end

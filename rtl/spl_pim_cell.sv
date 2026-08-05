@@ -152,13 +152,157 @@ module spl_pim_cell #(
     assign sub_ext = {1'b0, local_store} - {1'b0, ra_data_in} - {{DATA_W{1'b0}}, borrow_reg};
     assign mul_full = local_store * ra_data_in;
 
-    // ── FP16 stubs (placeholder: converts to integer ops until FP16 core integrated) ──
-    // Real FP16 implementation requires: sign/exponent/mantissa extraction,
-    // normalization, rounding (round-to-nearest-even), and denormal handling.
-    // These stubs treat FP16 as 16-bit integers packed in low 16 bits of 64-bit word.
-    logic [15:0] fp16_a, fp16_b;
-    assign fp16_a = local_store[15:0];
-    assign fp16_b = ra_data_in[15:0];
+    // ═══════════════════════════════════════════════
+    //  IEEE 754 FP16 CORE — replaces integer stubs
+    // ═══════════════════════════════════════════════
+    // FP16 format: [15]=sign, [14:10]=exponent(bias=15), [9:0]=mantissa
+    // Internally uses MantW=24 bits (enough for 10+10+guard) to compute,
+    // then rounds to nearest-even back to 10-bit mantissa.
+
+    // === FP16 field extraction ===
+    function automatic logic        fp16_sign(input logic [15:0] v);
+        return v[15];
+    endfunction
+    function automatic logic [4:0]  fp16_exp(input logic [15:0] v);
+        return v[14:10];
+    endfunction
+    function automatic logic [9:0]  fp16_man(input logic [15:0] v);
+        return v[9:0];
+    endfunction
+
+    function automatic logic [15:0] fp16_mk(logic sign, logic [4:0] exp, logic [9:0] man);
+        return {sign, exp, man};
+    endfunction
+
+    // === Classification ===
+    function automatic logic fp16_is_zero(input logic [15:0] v);
+        return (fp16_exp(v)==5'd0 && fp16_man(v)==10'd0);
+    endfunction
+    function automatic logic fp16_is_inf(input logic [15:0] v);
+        return (fp16_exp(v)==5'd31 && fp16_man(v)==10'd0);
+    endfunction
+    function automatic logic fp16_is_nan(input logic [15:0] v);
+        return (fp16_exp(v)==5'd31 && fp16_man(v)!=10'd0);
+    endfunction
+    function automatic logic fp16_is_sub(input logic [15:0] v);
+        return (fp16_exp(v)==5'd0 && fp16_man(v)!=10'd0);
+    endfunction
+
+    // === fp16_add: aligned mantissa add/sub (internal, a_sign already handled) ===
+    function automatic logic [15:0] fp16_add_core(
+        logic [15:0] a, logic [15:0] b, logic a_sub
+    );
+        logic        sa, sb;
+        logic [4:0]  ea, eb;
+        logic [11:0] ma, mb;          // 10-bit mant + 1 implicit + 1 guard
+        logic [4:0]  er;
+        logic [11:0] mr;
+        logic        sr;
+        logic        b_eff;           // effective operation sign
+        logic [15:0] result;
+        integer      diff;
+        begin
+            // NaN check
+            if (fp16_is_nan(a))    return a;
+            if (fp16_is_nan(b))    return b;
+            sa = fp16_sign(a);
+            sb = fp16_sign(b);
+            ea = fp16_exp(a);
+            eb = fp16_exp(b);
+            // Build mantissa with implicit leading bit
+            ma = fp16_is_sub(a) ? {1'b0, fp16_man(a), 1'b0} : {1'b1, fp16_man(a), 1'b0};
+            mb = fp16_is_sub(b) ? {1'b0, fp16_man(b), 1'b0} : {1'b1, fp16_man(b), 1'b0};
+            // Effective sign of b after considering a_sub
+            b_eff = a_sub ? ~sb : sb;
+            // Align: larger exponent as reference
+            if ({1'b0, ea} < {1'b0, eb} || ((ea == eb) && (ma < mb))) begin
+                // Swap: a < b in magnitude
+                {sa, ea, ma} = {b_eff, eb, mb}; {sb, eb, mb} = {sa, ea, ma};
+            end else begin
+                sb = b_eff;
+            end
+            er = ea;
+            diff = ea - eb;
+            if (diff > 11) mb = 12'd0; else mb = mb >> diff;
+            // Add or subtract mantissas
+            if (sa == sb) begin
+                mr = ma + mb; sr = sa;
+            end else begin
+                mr = ma - mb; sr = sa;
+            end
+            // Normalize
+            if (mr == 12'd0) begin
+                return {sr, 15'd0};   // result = ±0
+            end
+            while (mr[11] == 1'b0 && er > 0) begin
+                mr = mr << 1; er = er - 1;
+            end
+            // Round to nearest even (guard bit at mr[0])
+            if (mr[0] && (mr[1] || (mr[10:1] != 10'd0)))
+                mr = mr + 12'd2;
+            mr = mr >> 1;   // remove guard bit
+            er = er + 1;    // compensate for implicit bit
+            // Overflow → Inf
+            if (er >= 5'd31) return {sr, 5'd31, 10'd0};
+            // Underflow → zero
+            if (er == 5'd0 && mr[10] == 1'b0) return {sr, 15'd0};
+            result = {sr, er[4:0], mr[9:0]};
+            return result;
+        end
+    endfunction
+
+    // === fp16_mul: multiply two FP16 ===
+    function automatic logic [15:0] fp16_mul_core(logic [15:0] a, logic [15:0] b);
+        logic        sa, sb, sr;
+        logic [4:0]  ea, eb;
+        logic [10:0] ma, mb;
+        logic [21:0] prod;          // 11×11 = 22 bits
+        logic [4:0]  er;
+        logic [10:0] mr;
+        logic [6:0]  exp_sum;
+        begin
+            if (fp16_is_nan(a))              return a;
+            if (fp16_is_nan(b))              return b;
+            if (fp16_is_inf(a) || fp16_is_inf(b)) begin
+                if (fp16_is_zero(a) || fp16_is_zero(b))
+                    return 16'h7E00;   // Inf×0 → NaN
+                sr = fp16_sign(a) ^ fp16_sign(b);
+                return {sr, 5'd31, 10'd0};   // ±Inf
+            end
+            sa = fp16_sign(a); sb = fp16_sign(b); sr = sa ^ sb;
+            ea = fp16_exp(a); eb = fp16_exp(b);
+            ma = fp16_is_sub(a) ? {1'b0, fp16_man(a)} : {1'b1, fp16_man(a)};
+            mb = fp16_is_sub(b) ? {1'b0, fp16_man(b)} : {1'b1, fp16_man(b)};
+            // Multiply
+            prod = ma * mb;
+            exp_sum = {2'b0, ea} + {2'b0, eb} - 7'd15 + 7'd1;
+            // Normalize
+            if (prod[21]) begin
+                prod = prod >> 1; exp_sum = exp_sum + 1;
+            end
+            if (exp_sum >= 7'd31) return {sr, 5'd31, 10'd0};   // overflow → Inf
+            if (exp_sum <= 7'd0 && prod[20] == 1'b0) return {sr, 15'd0};   // underflow → 0
+            // Round
+            if (prod[9] && (prod[8] || (prod[7:0] != 8'd0)))
+                prod = prod + 22'd512;   // add 1 at bit 9
+            mr = prod[20:10];
+            er = exp_sum[4:0];
+            if (exp_sum <= 0) er = 5'd0;
+            return {sr, er, mr[9:0]};
+        end
+    endfunction
+
+    // === fp16_cmp: ordered comparison (false if either NaN) ===
+    function automatic logic fp16_cmp_core(logic [15:0] a, logic [15:0] b);
+        logic sa, sb;
+        begin
+            if (fp16_is_nan(a) || fp16_is_nan(b)) return 1'b0;
+            if (fp16_is_zero(a) && fp16_is_zero(b)) return 1'b1;  // +0 == -0
+            sa = fp16_sign(a); sb = fp16_sign(b);
+            if (sa != sb) return 1'b0;
+            return (a == b);
+        end
+    endfunction
 
     always @(*) begin
         // Default: NOP / pass-through
@@ -195,13 +339,14 @@ module spl_pim_cell #(
                 OP_XOR:    alu_result = local_store ^ ra_data_in;
                 OP_NOT:    alu_result = ~local_store;
 
-                // ── FP16 (stubs — real FP16 core TBD in Phase 2) ──
-                // Each stub operates on low 16 bits; upper bits zero-extended.
-                OP_FP16_ADD: alu_result = {{(DATA_W-16){1'b0}}, fp16_a + fp16_b};
-                OP_FP16_SUB: alu_result = {{(DATA_W-16){1'b0}}, fp16_a - fp16_b};
-                OP_FP16_MUL: alu_result = {{(DATA_W-16){1'b0}}, fp16_a * fp16_b};
-                OP_FP16_CMP: alu_result = {{(DATA_W-1){1'b0}}, (fp16_a == fp16_b)};
-                OP_FP16_MAC: alu_result = {{(DATA_W-16){1'b0}}, fp16_a + (fp16_a * fp16_b)};
+                // ── FP16: IEEE 754 half-precision (roundTiesToEven) ──
+                OP_FP16_ADD: alu_result = {{(DATA_W-16){1'b0}}, fp16_add_core(local_store[15:0], ra_data_in[15:0], 1'b0)};
+                OP_FP16_SUB: alu_result = {{(DATA_W-16){1'b0}}, fp16_add_core(local_store[15:0], ra_data_in[15:0], 1'b1)};
+                OP_FP16_MUL: alu_result = {{(DATA_W-16){1'b0}}, fp16_mul_core(local_store[15:0], ra_data_in[15:0])};
+                OP_FP16_CMP: alu_result = {{(DATA_W-1){1'b0}}, fp16_cmp_core(local_store[15:0], ra_data_in[15:0])};
+                OP_FP16_MAC: alu_result = {{(DATA_W-16){1'b0}},
+                    fp16_add_core(fp16_mul_core(local_store[15:0], ra_data_in[15:0]),
+                                  local_store[31:16], 1'b0)};  // MAC: lo16×in + hi16
 
                 // ── Predicate ──
                 OP_PRED_SET: alu_result = {{(DATA_W-1){1'b0}}, ra_data_in[0]};  // just passthrough; pred_reg set separately
