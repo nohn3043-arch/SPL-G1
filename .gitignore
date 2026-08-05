@@ -2,7 +2,12 @@
 g1_sim
 sim_out.txt
 *.vcd
+*.vvp
+*.log
 
 # Python
 __pycache__/
 *.pyc
+
+# Generated EDA outputs (keep only committed examples if needed)
+outputs/*

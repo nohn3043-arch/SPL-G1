@@ -1,6 +1,0 @@
-DBG2: start
-DBG2: after reset_all
-DBG2: clocks done, compliant=1
-[PASS] DBG2: compliance baseline
-DBG2: after check, pass=1 fail=0 total=1
-rtl/tb_dbg2.sv:69: $finish called at 245000 (1ps)
