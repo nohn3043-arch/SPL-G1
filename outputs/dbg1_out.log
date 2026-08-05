@@ -1,0 +1,4 @@
+DBG1: initial start
+DBG1: rst released, waiting clocks
+DBG1: 20 clocks done, compliant=1
+rtl/tb_dbg1.sv:32: $finish called at 225000 (1ps)

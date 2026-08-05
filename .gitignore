@@ -1,13 +1,8 @@
+# Build / simulation artifacts
+g1_sim
+sim_out.txt
+*.vcd
+
 # Python
 __pycache__/
 *.pyc
-*.pyo
-
-# EDA outputs (generated netlists, waveforms)
-outputs/
-*.vcd
-*.vvp
-
-# OS
-.DS_Store
-Thumbs.db

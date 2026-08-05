@@ -170,7 +170,11 @@ module G1_Top_Integrated #(
     logic [63:0] audit_constraint_mask;   // 1=allowed, 0=forbidden
 
     // Per-op constraint_bits: gate based on opcode class
+    // Latched at dispatch time: audit unit samples S_CHECK one+ cycles after
+    // dispatch, when sequencer may have left SEQ_EXEC (pim_op resets to 0).
+    // Latching avoids the audit seeing all-1s by the time it evaluates.
     logic [63:0] constraint_bits_op;
+    logic [63:0] constraint_bits_latch;
     wire is_fp16_op  = (pim_seq_op[4:0] >= 5'h13) && (pim_seq_op[4:0] <= 5'h17);
     wire is_mat_mode = (exec_mode == 2'b11);
     wire is_vec_mode = (exec_mode == 2'b10);
@@ -182,6 +186,15 @@ module G1_Top_Integrated #(
         audit_constraint_mask[1] || !is_fp16_op,        // bit[1]: FP16 gate
         audit_constraint_mask[0]                        // bit[0]: integer ALU gate
     };
+
+    // Latch at dispatch pulse (seq_audit_dispatch)
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            constraint_bits_latch <= 64'hFFFF_FFFF_FFFF_FFFF;
+        end else if (seq_audit_dispatch) begin
+            constraint_bits_latch <= constraint_bits_op;
+        end
+    end
 
     // Aggregate P→Q tags from PIM array into audit pipeline
     // Format for v2: exact 256-bit field-aligned causal_record
@@ -220,7 +233,7 @@ module G1_Top_Integrated #(
     assign audit_p = {
         8'h00,                          // rule_id          [255:248]
         dep_mask_bits,                  // dep_mask         [247:192]
-        constraint_bits_op,             // constraint_bits  [191:128] — A5: per-op gate
+        constraint_bits_latch,          // constraint_bits  [191:128] — A5: latched at dispatch
         64'h0,                          // weight_q16_16    [127:64]
         64'h0                           // pad              [63:0]
     };  // 8 + 56 + 64 + 64 + 64 = 256
@@ -316,6 +329,9 @@ module G1_Top_Integrated #(
             fuse_blown <= 1'b0;
         end else if (audit_fb_done && !audit_fb_pass) begin
             fuse_blown <= 1'b1;   // audit violation → cut output data path
+            `ifdef SIMULATION
+            $display("[FUSE] blown: fb_done=%b fb_pass=%b", audit_fb_done, audit_fb_pass);
+            `endif
         end
     end
 

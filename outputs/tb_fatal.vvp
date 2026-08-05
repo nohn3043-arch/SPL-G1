@@ -1,0 +1,28 @@
+#! /c/Source/iverilog-install/bin/vvp
+:ivl_version "12.0 (devel)" "(s20150603-1539-g2693dd32b)";
+:ivl_delay_selection "TYPICAL";
+:vpi_time_precision - 12;
+:vpi_module "C:\iverilog\lib\ivl\system.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_sys.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_textio.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2005_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\va_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2009.vpi";
+S_000001c75b2eed20 .scope package, "$unit" "$unit" 2 1;
+ .timescale 0 0;
+S_000001c75b2e1560 .scope module, "tb_fatal" "tb_fatal" 3 3;
+ .timescale -9 -12;
+    .scope S_000001c75b2e1560;
+T_0 ;
+    %vpi_call/w 3 5 "$display", "before fatal" {0 0 0};
+    %vpi_call/w 3 6 "$fatal", 32'sb00000000000000000000000000000001, "test fatal" {0 0 0};
+    %vpi_call/w 3 7 "$display", "after fatal (should not print)" {0 0 0};
+    %vpi_call/w 3 8 "$finish" {0 0 0};
+    %end;
+    .thread T_0;
+# The file index is used to find the file name in the following table.
+:file_names 4;
+    "N/A";
+    "<interactive>";
+    "-";
+    "rtl/tb_fatal.sv";

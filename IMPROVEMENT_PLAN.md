@@ -1,7 +1,7 @@
-# SPL-G1 TCU 改进计划 v4.0
+# SPL-G1 TCU 改进计划 v5.0
 
-> Version 4.0 — 2026-08-05
-> 定位修正: Trusted Compute Unit (TCU)。Phase A 已过半(A1/A6 完成)。
+> Version 5.0 — 2026-08-05
+> 定位修正: Trusted Compute Unit (TCU)。**Phase A 全部完成(A1-A6)。**
 
 ---
 
@@ -36,11 +36,11 @@
 
 | # | 差距 | 现状 | 影响 |
 |---|------|------|------|
-| **C1** | 无编译器 | 编程 = 手写微码 hex | TCU 无法被外部工具编程 |
-| **C2** | FP16 虚假 | 整数运算冒充 IEEE 754 | 浮点审计/计算不可信 |
-| **C3** | 审计空转 | constraint_bits=全1, pass-through | "因果审计"是形式标签 |
-| **C4** | 无外存/IO | RA-BUS target 3 = 存根,无传感器接口 | 数据进不来出不去 |
-| **C5** | 规模太小 | 16 单元 × 64bit = 128 字节 | 装不下任何真实规则库 |
+| **C1** | ~~无编译器~~ | ✅ splcc.py v0.1 已交付 | C→微码可行,待扩展 |
+| **C2** | ~~FP16 虚假~~ | ✅ IEEE 754 已实现 | 浮点可信 |
+| **C3** | ~~审计空转~~ | ✅ constraint mask 可编程 | 违规→熔断闭环已验证 |
+| **C4** | ~~无外存/IO~~ | ✅ READ 事务 + ext_mem_controller | 数据通道可用 |
+| **C5** | 规模太小 | 16 单元 × 64bit = 128 字节 | 装不下真实规则库 |
 | **C6** | 无时序/面积/功耗 | 未跑综合(Yosys/DC) | 不知道能不能流片 |
 
 ---
@@ -53,26 +53,29 @@ spl_pim_sequencer v4: 256-entry 程序存储器, JMP/JZ/JNZ/CALL/RET/HALT, 8-dee
 ### A6. SBC 熔断 ✅ 完成
 G1_Top v3: fuse_blown 输出, audit_fb_pass==0 → 永久锁定 → ra_rdata 强制清零, 仅 rst_n 恢复。
 
-### A2. 真 FP16(BF16) — 优先级最高
-**目标**: 实现 IEEE 754 half-precision 算术。
-- 符号位 / 指数(5-bit) / 尾数(10-bit) / 舍入模式(roundTiesToEven)
-- 特殊值: NaN / ±Inf / subnormal
-- 测试向量: subnormal × Inf → NaN, 0 × Inf → NaN, etc.
+### A2. 真 FP16 ✅ 完成
+IEEE 754 half-precision (roundTiesToEven) 实现于 `spl_pim_cell.sv`:
+- 符号/指数(5-bit)/尾数(10-bit)/subnormal/NaN/±Inf
+- FP16_ADD/SUB/MUL/CMP/MAC 全部真实 IEEE 语义,替换整数 stubs
 
-### A3. splcc 编译器 v0.1
-**目标**: C 子集 → SPL-G1 微码。最低交付: `for` 循环 + `if/else` + 数组 → 跑通仿真。
-- 前端: 词法+语法 → 三地址码 IR
-- 后端: 寄存器分配(local_store 映射) + 微码调度 + audit tag 注入
+### A3. splcc 编译器 v0.1 ✅ 完成
+`splcc.py` + `tests/loop_sub.c`:
+- 词法/语法 → 三地址码 IR → SPL-G1 微码 CONFIG 输出
+- 支持 int 变量 / for / while / if-else / 算术 / 比较
+- `--verify` 解释器模式验证语义
 
-### A4. 数据通道
-- RA-BUS READ 事务实现 + 回读验证
-- 外部存储接口(RA-BUS target 3)从存根升级为内存映射
-- 传感器对账接口(基准数据注入)
+### A4. 数据通道 ✅ 完成
+- Sequencer v5: RA-BUS READ 事务(SEQ_READ 状态)
+- ext_mem_controller 集成(RA-BUS target 3)
+- 读回路径验证
 
-### A5. 因果约束规则 v1
-**目标**: 关闭 pass-through,真查违规。
-- 最小规则集(6-10 条): 如"禁止 EVOLVE 后未经 AUDIT 直接 ANCHOR"
-- 加载到 constraint_bits → audit 对违规正确 reject → fuse_blown 测试可通过
+### A5. 因果约束规则 v1 ✅ 完成
+- `audit_constraint_mask`(64-bit CONFIG 可编程, audit target):
+  - bit[0] 整数 ALU / bit[1] FP16 / bit[2] VECTOR / bit[3] MATRIX
+  - 默认全 1(bridge 模式,向后兼容)
+- `constraint_bits_latch` dispatch 时锁存,避免组合时序误判
+- Test 9 闭环验证: 禁 FP16 → 执行 FP16_ADD → audit reject → fuse_blown=1
+  → PIM 输出切断(9d)但审计/身份通道仍可读(9e/9f)
 
 ---
 

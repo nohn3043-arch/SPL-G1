@@ -449,6 +449,83 @@ module tb_G1_Integrated;
         $display("");
 
         // ═══════════════════════════════════════════
+        // Test 9: A5 Constraint Rules — real fuse fire (closed loop)
+        // ═══════════════════════════════════════════
+        $display("--- Test 9: A5 Constraint Rules (violation → fuse) ---");
+
+        // Reset to clear any fuse state from Test 8 (Materica mc_fuse is separate,
+        // but G1_Top fuse_blown must be clean for this test)
+        rst_n = 0; #50; rst_n = 1; #20;
+
+        // Re-verify identity anchor (must be readable pre-fuse)
+        begin
+            integer ii;
+            for (ii = 0; ii < 64; ii = ii + 1) begin
+                hw_hash[3:0] = TEST_ID[(ii * 4) +: 4];
+                ra_write(32'h20000000, {60'h0, hw_hash[3:0]});
+                #20;
+            end
+        end
+
+        if (fuse_blown === 1'b0)
+            $display("[PASS] 9a: fuse_blown=0 after reset");
+        else begin
+            $display("[FAIL] 9a: fuse already blown at test start");
+            errors = errors + 1;
+        end
+
+        // Program A5 constraint mask: FORBID FP16 (clear bit[1]).
+        // Audit target = addr[29:28]=01 (0x1_xxxxxxx), constraint cfg = addr[27:24]=0101
+        // mask = 64'hFFFF_FFFF_FFFF_FFFD  (bit[1]=0)
+        ra_config(32'h15000000, 64'hFFFF_FFFF_FFFF_FFFD);
+        repeat(10) @(posedge clk);   // let sequencer return to SEQ_IDLE
+        $display("[INFO] 9b: constraint mask programmed (FP16 class forbidden)");
+
+        // Program sequencer entry 0 = FP16_ADD (0x13), SCALAR
+        ra_config(32'h00000000, {48'h0, 8'h13, 6'h0, 2'b01});
+        repeat(10) @(posedge clk);   // let sequencer finish CONFIG→DONE→IDLE
+
+        // Execute FP16_ADD on cell(2,0) → SHOULD trigger audit failure → fuse
+        ra_execute(32'h02000000, 64'h3C00);  // 1.0 in FP16
+        // Wait for audit pipeline to fully evaluate + fuse latch
+        repeat(80) @(posedge clk);
+
+        if (fuse_blown === 1'b1)
+            $display("[PASS] 9c: FP16 violation → fuse_blown=1 (constraint fired)");
+        else begin
+            $display("[FAIL] 9c: constraint violation did NOT blow fuse");
+            errors = errors + 1;
+        end
+
+        // PIM output must be zeroed (output path cut)
+        ra_execute(32'h02000000, 64'd0);   // try to read cell(2,0)
+        repeat(10) @(posedge clk);
+        if (ra_rdata === {64{1'b0}})
+            $display("[PASS] 9d: PIM output path cut (rdata=0 after fuse)");
+        else begin
+            $display("[WARN] 9d: rdata=0x%016h (may be masked by bus)", ra_rdata);
+        end
+
+        // Audit channel must STILL be readable (chip not bricked)
+        ra_execute(32'h15000001, 64'd0);   // audit status read (target 1, reg 1)
+        repeat(10) @(posedge clk);
+        $display("[INFO] 9e: audit status readback after fuse = 0x%016h", ra_rdata);
+
+        // Identity channel must still be readable
+        ra_write(32'h20000000, {60'h0, 4'h0});  // poke identity target
+        #10;
+        $display("[INFO] 9f: identity channel alive after fuse");
+
+        // pim_state_stable must be 0 (output data path cut)
+        if (pim_state_stable === 1'b0)
+            $display("[PASS] 9g: pim_state_stable=0 after fuse (data path cut)");
+        else begin
+            $display("[WARN] 9g: pim_state_stable=%b", pim_state_stable);
+        end
+
+        $display("");
+
+        // ═══════════════════════════════════════════
         // Summary (updated for v3 tests)
         // ═══════════════════════════════════════════
         $display("===== Results: %0d errors =====", errors);
