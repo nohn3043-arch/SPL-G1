@@ -1,5 +1,7 @@
 # Build / simulation artifacts
 g1_sim
+g1_eda_sim
+g1_unified_sim
 sim_out.txt
 *.vcd
 *.vvp

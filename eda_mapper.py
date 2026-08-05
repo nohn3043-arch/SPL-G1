@@ -42,6 +42,7 @@ class OpMapping:
     all_candidates: List[ImplementationVariant] = field(default_factory=list)
     failed_reason: Optional[str] = None          # 无满足约束的变体时记录原因
     param_warnings: List[str] = field(default_factory=list)  # v0.4.0
+    material: Optional[str] = None               # Stage 4: 生效的材料（per-op）
 
 
 @dataclass
@@ -58,9 +59,23 @@ class MappingResult:
     min_snr_db: float = 0.0
     all_passed: bool = True
     unmapped_count: int = 0
+    # ── Stage 4: 单片混装异构边界预算 ──
+    # materials_used: 实际使用的材料集合
+    # cross_material_edges: 跨材料数据依赖边数（需光电/接口转换）
+    # material_boundary_pairs: 跨材料对统计 (src_material, dst_material) → count
+    materials_used: set = field(default_factory=set)
+    cross_material_edges: int = 0
+    material_boundary_pairs: dict = field(default_factory=dict)
 
     def summary_text(self) -> str:
         status = "OK" if self.all_passed else f"FAILED ({self.unmapped_count} 个算子未映射)"
+        het = ""
+        if len(self.materials_used) > 1:
+            pairs = ", ".join(f"{a}→{b}:{n}"
+                              for (a, b), n in sorted(self.material_boundary_pairs.items()))
+            het = (f"\n  单片混装: {len(self.materials_used)} 种材料 "
+                   f"({' + '.join(sorted(self.materials_used))})\n"
+                   f"  跨材料边界: {self.cross_material_edges} 条数据边需接口转换 [{pairs}]")
         return (
             f"映射结果 [{status}]\n"
             f"  设计: {self.design_name}\n"
@@ -74,7 +89,7 @@ class MappingResult:
             f"power={self.total_power_mw:.1f}mW "
             f"area={self.total_area_um2:.1f}um2 "
             f"min_snr={self.min_snr_db:.1f}dB\n"
-            f"  算子: {len(self.ops)} 总 / {self.unmapped_count} 未映射"
+            f"  算子: {len(self.ops)} 总 / {self.unmapped_count} 未映射{het}"
         )
 
 
@@ -168,23 +183,32 @@ def map_causal_ir(
     min_snr = float('inf')
     unmapped = 0
 
+    # Stage 4 (单片混装): per-op material resolution.
+    # op.material overrides design-wide material; None → global.
+    # Tracks per-op material for the heterogeneous boundary budget.
+    op_material_of = {}
+    for i, op in enumerate(ir.ops):
+        op_material_of[i] = op.material if getattr(op, 'material', None) else material
+
     for i, op in enumerate(ir.ops):
         op_code = REVERSE_OP_MAPPING.get(op.op_type, 'UNKNOWN')
+        op_material = op_material_of[i]
         mapping = OpMapping(
             op_index=i,
             op_type=op_code,
             inputs=list(op.inputs),
             outputs=list(op.outputs)
         )
+        mapping.material = op_material  # record effective material (Stage 4)
 
         # v0.4.0: 校验算子参数
         mapping.param_warnings = validate_op_params(op)
 
-        # 获取该算子在该材料下的所有变体
+        # Stage 4: 获取该算子在该材料下的所有变体（按 op 维度，非全局）
         try:
-            all_variants = MaterialLibrary.get_variants(material, op.op_type)
+            all_variants = MaterialLibrary.get_variants(op_material, op.op_type)
         except ValueError:
-            mapping.failed_reason = f"材料 {material} 下无算子 {op_code} 的工艺变体"
+            mapping.failed_reason = f"材料 {op_material} 下无算子 {op_code} 的工艺变体"
             mapping.all_candidates = []
             unmapped += 1
             op_mappings.append(mapping)
@@ -220,6 +244,26 @@ def map_causal_ir(
 
         op_mappings.append(mapping)
 
+    # ── Stage 4: 异构边界预算（单片混装） ──
+    materials_used = set(m.material for m in op_mappings if m.material)
+    cross_edges = 0
+    boundary_pairs: dict = {}
+
+    # 跨材料数据边 = 消费者 op 与生产者 op 材料不同的边
+    producers: dict = {}
+    for i, op in enumerate(ir.ops):
+        for out in op.outputs:
+            producers[out] = i
+    for i, op in enumerate(ir.ops):
+        src_mat = op_material_of[i]
+        for inp in op.inputs:
+            if inp in producers:
+                dst_mat = op_material_of[producers[inp]]
+                if src_mat != dst_mat:
+                    cross_edges += 1
+                    pair = (dst_mat, src_mat)
+                    boundary_pairs[pair] = boundary_pairs.get(pair, 0) + 1
+
     return MappingResult(
         design_name=ir.name,
         material=material,
@@ -231,5 +275,8 @@ def map_causal_ir(
         total_area_um2=total_area,
         min_snr_db=min_snr if min_snr != float('inf') else 0.0,
         all_passed=(unmapped == 0),
-        unmapped_count=unmapped
+        unmapped_count=unmapped,
+        materials_used=materials_used,
+        cross_material_edges=cross_edges,
+        material_boundary_pairs=boundary_pairs
     )

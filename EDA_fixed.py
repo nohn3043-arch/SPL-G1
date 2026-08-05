@@ -45,6 +45,12 @@ class CausalOp:
     inputs: List[str]
     outputs: List[str]
     params: Dict[str, Any] = field(default_factory=dict)
+    # Stage 4 (单片混装): per-op material override.
+    # None → use the design-wide material (map_causal_ir `material` arg).
+    # Set → this op maps against THIS material's variants only, enabling
+    #       a single chip with ops implemented in different materials
+    #       (heterogeneous integration).
+    material: Optional[str] = None
 
     def __repr__(self) -> str:
         # 转义特殊字符，防止日志注入
@@ -52,7 +58,8 @@ class CausalOp:
             return s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         escaped_ins = [escape(inp) for inp in self.inputs]
         escaped_outs = [escape(out) for out in self.outputs]
-        return f"CausalOp({self.op_type.value.upper()}, ins={escaped_ins}, outs={escaped_outs})"
+        mat = f", material={self.material}" if self.material else ""
+        return f"CausalOp({self.op_type.value.upper()}, ins={escaped_ins}, outs={escaped_outs}{mat})"
 
 
 # ==================== 2. 因果中间表示 (Causal IR) ====================

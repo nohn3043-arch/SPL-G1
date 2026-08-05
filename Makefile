@@ -91,9 +91,37 @@ wave:
 	fi
 	$(GTKWAVE) $(WAVE_FILE)
 
+# ── Stage 3: 材料覆盖矩阵 + 多材料批量对比 ──
+.PHONY: pdk-report
+pdk-report:
+	$(PYTHON) eda_pdk_report.py
+
+.PHONY: multi-pdk
+multi-pdk:
+	$(PYTHON) eda_cli.py --desc examples/causal_chain_demo.json --multi-pdk --pdk-dir pdk
+
+# ── Stage 1/2: EDA→RTL 闭环 ──
+.PHONY: rtlgen
+rtlgen:
+	$(PYTHON) eda_cli.py --desc examples/causal_chain_demo.json --pdk pdk/silicon_cim_v1.json --rtl
+
+.PHONY: rtlgen-apply
+rtlgen-apply:
+	$(PYTHON) eda_cli.py --desc examples/causal_chain_demo.json --pdk pdk/silicon_cim_v1.json --rtl --apply-rtl
+
+# ── Stage 4: 单片混装演示 ──
+.PHONY: demo-hetero
+demo-hetero:
+	$(PYTHON) eda_cli.py --desc examples/heterogeneous_demo.json --pdk pdk/silicon_cim_v1.json --output outputs/netlist_hetero.json
+
+# ── Stage 5: splcc 汇合 ──
+.PHONY: splcc-bridge
+splcc-bridge:
+	$(PYTHON) splcc_bridge.py tests/loop_sub.c --verify --emit outputs
+
 # 清理
 .PHONY: clean
 clean:
-	rm -f $(SIM_BIN) $(WAVE_FILE)
+	rm -f $(SIM_BIN) $(WAVE_FILE) g1_eda_sim
 	rm -f outputs/*.json
 	@echo "清理完成"

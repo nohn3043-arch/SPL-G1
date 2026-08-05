@@ -84,11 +84,20 @@ def parse_causal_description(file_path: str) -> CausalIR:
         if not isinstance(op_outputs, list) or len(op_outputs) == 0:
             raise ParserError(f"算子 #{i} ({op_type_str}): 缺失或为空的 outputs")
 
+        # Stage 4: per-op material override (单片混装).
+        # Optional "material" key per operator; None → design-wide material.
+        op_material = op_spec.get('material')
+        if op_material is not None and not isinstance(op_material, str):
+            raise ParserError(
+                f"算子 #{i} ({op_type_str}): material 字段必须为字符串或省略"
+            )
+
         op = CausalOp(
             op_type=OP_MAPPING[op_type_str],
             inputs=op_inputs,
             outputs=op_outputs,
-            params=op_spec.get('params', {})
+            params=op_spec.get('params', {}),
+            material=op_material
         )
         ops.append(op)
 

@@ -1,0 +1,53 @@
+{
+  "design_name": "heterogeneous_demo",
+  "description": "单片硅光混装演示：部分算子走 silicon CIM，部分算子走 optical MZI 光子（per-op material 覆盖）。验证 Stage 4 异构边界预算。",
+  "inputs": [
+    "raw_photonic_signal",
+    "context_vector"
+  ],
+  "outputs": [
+    "final_anchor"
+  ],
+  "operators": [
+    {
+      "op_type": "NS",
+      "inputs": ["raw_photonic_signal"],
+      "outputs": ["stripped_optical"],
+      "material": "optical_mzi_photonics_v1",
+      "params": {}
+    },
+    {
+      "op_type": "IAP",
+      "inputs": ["stripped_optical", "context_vector"],
+      "outputs": ["verified_premise"],
+      "material": "silicon_cim_28nm_v1",
+      "params": {
+        "depth": 2
+      }
+    },
+    {
+      "op_type": "CCS",
+      "inputs": ["verified_premise"],
+      "outputs": ["synced_state"],
+      "material": "silicon_cim_28nm_v1",
+      "params": {
+        "sync_mode": "strict_barrier"
+      }
+    },
+    {
+      "op_type": "LCH",
+      "inputs": ["synced_state"],
+      "outputs": ["fragility_report"],
+      "material": "optical_mzi_photonics_v1",
+      "params": {}
+    },
+    {
+      "op_type": "STATE",
+      "inputs": ["fragility_report"],
+      "outputs": ["final_anchor"],
+      "params": {
+        "update_mode": "in_situ_evolve"
+      }
+    }
+  ]
+}

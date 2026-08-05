@@ -16,6 +16,13 @@
 // License: SPL-G1 dual-track (see LICENSE)
 // ============================================================================
 
+// ── EDA configuration hook (Stage 1: 缝1 打通) ──
+// PIM_ROWS/PIM_COLS/MATERIAL/STRATEGY come from spl_config_pkg.
+// Default package lives in rtl/spl_config_pkg.sv; the EDA toolchain
+// overwrites it with mapping results via `--rtl --apply-rtl`.
+`include "spl_config_pkg.sv"
+import spl_config_pkg::*;
+
 module G1_Top_Integrated #(
     parameter int DATA_W = 128        // v3: RA-BUS data width (64=legacy, 128=expanded)
 ) (
@@ -44,8 +51,9 @@ module G1_Top_Integrated #(
 
     localparam [255:0] G1_IDENTITY  = 256'h8525D007_59A4_CA22_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     localparam int      HASH_CYCLES = 64;
-    localparam int      PIM_ROWS    = 64;   // v6: Phase B — commercial scale (4,096 units)
-    localparam int      PIM_COLS    = 64;   // v6: Phase B — commercial scale (4,096 units)
+    // ── EDA-driven array geometry (from spl_config_pkg) ──
+    localparam int      PIM_ROWS    = spl_config_pkg::PIM_ROWS;   // EDA-driven (default 64)
+    localparam int      PIM_COLS    = spl_config_pkg::PIM_COLS;   // EDA-driven (default 64)
 
     // ═══════════════════════════════════════════════
     // RA-BUS Arbiter → Target signals

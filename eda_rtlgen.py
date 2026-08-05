@@ -24,12 +24,38 @@ from eda_mapper import MappingResult, OpMapping
 # Component 1: spl_config_pkg.sv
 # ═══════════════════════════════════════════════════════════════════
 
-def _generate_config_pkg(result: MappingResult) -> str:
-    """Generate spl_config_pkg.sv from mapping results."""
+# ── Causal op → PIM micro-op encoding (Stage 1/2: real dataflow) ──
+# These map the 6 causal op classes to PIM micro-ops understood by
+# spl_pim_cell / spl_pim_sequencer. Semantics are PLACEHOLDER until
+# Phase A5 NOMOS constraint rules define exact per-op encodings — the
+# key improvement is that stimulus now drives the REAL array/sequencer
+# with a per-op micro-op + cell assignment, instead of all-MUL @ cell(0,0).
+CAUSAL_OP_TO_MICRO = {
+    "NS":      0x01,   # ADD     — narrative strip as scalar filter (placeholder)
+    "IAP":     0x08,   # CMP_EQ  — assumption detect as compare (placeholder)
+    "LCH":     0x0B,   # CMP_GT  — fragility hedge as threshold (placeholder)
+    "CCS":     0x00,   # NOP     — clock sync as barrier (placeholder)
+    "STATE":   0x1B,   # STORE   — state update as store (placeholder)
+    "COMPUTE": 0x05,   # MUL     — compute as multiply (placeholder)
+}
+
+# ── RA-BUS cell addressing (from spl_pim_compute_array.sv) ──
+#   cell(r,c) → ra_addr = (r << 24) | (c << 16),  target bits[29:28]=00
+#   sequencer program entry → ra_addr[9:0]
+
+
+def _generate_config_pkg(result: MappingResult,
+                         array_rows: int = 64,
+                         array_cols: int = 64) -> str:
+    """Generate spl_config_pkg.sv from mapping results.
+
+    This package is the EDA→RTL configuration hook (Stage 1):
+    G1_Top_Integrated imports it and reads PIM_ROWS/PIM_COLS/MATERIAL.
+    """
     lines = [
         "// ============================================================================",
         f"// spl_config_pkg — Auto-generated from EDA mapping: {result.design_name}",
-        "// DO NOT EDIT MANUALLY — regenerate with: python eda_cli.py --rtl",
+        "// DO NOT EDIT MANUALLY — regenerate with: python eda_cli.py --rtl --apply-rtl",
         "// ============================================================================",
         "",
         "package spl_config_pkg;",
@@ -42,6 +68,10 @@ def _generate_config_pkg(result: MappingResult) -> str:
         f"    localparam string DESIGN_NAME = \"{result.design_name}\";",
         f"    localparam string MATERIAL    = \"{result.material}\";",
         f"    localparam string STRATEGY    = \"{result.strategy}\";",
+        "",
+        "    // ── Array geometry (EDA-driven; G1_Top reads these) ──",
+        f"    localparam int    PIM_ROWS    = {array_rows};",
+        f"    localparam int    PIM_COLS    = {array_cols};",
         ""
     ])
 
@@ -60,9 +90,9 @@ def _generate_config_pkg(result: MappingResult) -> str:
     # Op type enum
     lines.append("    // ── Causal op type encoding ──")
     lines.append("    typedef enum logic [2:0] {")
-    op_types = list(set(op.op_type for op in result.ops))
+    op_types = sorted(set(op.op_type for op in result.ops))
     for i, ot in enumerate(op_types):
-        comma = "}" if i == len(op_types) - 1 else ","
+        comma = "," if i != len(op_types) - 1 else ""
         safe_name = ot.replace("-", "_").replace(" ", "_").upper()
         lines.append(f"        OP_{safe_name} = 3'd{i}{comma}")
     lines.append("    } causal_op_type_t;")
@@ -111,87 +141,237 @@ def _sanitize_identifier(s: str) -> str:
     return re.sub(r'[^A-Za-z0-9_]', '_', s)
 
 
-def _compute_config_to_rtl_op(op: OpMapping) -> str:
-    """Map EDA COMPUTE op params to PIM micro-op code."""
-    if op.op_type.lower() in ("compute",):
-        params = getattr(op, '_orig_params', {}) or {}
-        precision = params.get("precision", "INT32")
-        throughput = params.get("throughput", 1)
-        # Default to MUL op for COMPUTE
-        return "8'h03"  # PIM MUL
-    return "8'h00"  # NOP
+def _generate_tb_stimulus(result: MappingResult,
+                          array_rows: int = 64,
+                          array_cols: int = 64,
+                          ir: object = None) -> str:
+    """Generate a SYSTEMVERILOG TESTBENCH driving the REAL PIM array.
 
+    Stage 1 (缝2 打通): stimulus is no longer a hardcoded MUL@cell(0,0)
+    placeholder. Each causal IR op gets:
+      - a real cell assignment (row-major over the array geometry)
+      - a micro-op from CAUSAL_OP_TO_MICRO
+      - a sequencer program entry (CONFIG) + EXECUTE, mirroring the
+        exact RA-BUS protocol of tb_G1_Integrated (ra_config/ra_execute).
+    The generated file is a standalone testbench that compiles and runs
+    against the RTL (iverilog), so EDA output is directly verifiable.
 
-def _generate_tb_stimulus(result: MappingResult) -> str:
-    """Generate a SystemVerilog task-based stimulus file from causal IR ops."""
+    Stage 2 (dataflow real): per-op execution reads back predecessor
+    cells via RA-BUS READ (ra_cmd=00) into a signal-value array, then
+    passes the first predecessor value into the destination cell —
+    a real readback-pass-execute sequence over the causal graph edges.
+    """
     lines = [
         "// ============================================================================",
-        f"// tb_stimulus — Auto-generated from EDA mapping: {result.design_name}",
+        f"// tb_eda_stimulus — Auto-generated from EDA mapping: {result.design_name}",
         "// DO NOT EDIT MANUALLY — regenerate with: python eda_cli.py --rtl",
+        "// ============================================================================",
+        "// Stage 1: real dataflow stimulus. Each causal IR op drives the",
+        "// actual PIM array via the RA-BUS protocol (CONFIG entry + EXECUTE).",
+        "//",
+        "// Compile:",
+        "//   iverilog -g2012 -o g1_sim rtl/G1_Top_Integrated.sv \\",
+        "//     rtl/ra_bus_arbiter.sv rtl/spl_pim_sequencer.sv rtl/spl_pim_cell.sv \\",
+        "//     rtl/spl_pim_compute_array.sv rtl/spl_cim_causal_unit.sv \\",
+        "//     rtl/ext_mem_controller.sv rtl/materica_compliance_unit.sv \\",
+        f"//     <this file>",
         "// ============================================================================",
         "",
         "`timescale 1ns / 1ps",
         "",
-        "// Include this file in your main testbench and call tb_stimulus_run();",
+        "module tb_eda_stimulus;",
         "",
-        "// ── Per-op stimulus tasks (one per causal IR op) ──",
-        ""
-    ]
-
-    for op in result.ops:
-        safe_name = _sanitize_identifier(f"op{op.op_index}_{op.op_type}")
-        lines.extend([
-            f"    // [{op.op_index}] {op.op_type}: ({', '.join(op.inputs)}) → ({', '.join(op.outputs)})",
-            f"    task tb_stim_{safe_name}(",
-            f"        ref logic [31:0] ra_addr,"
-            f"        ref logic [63:0] ra_wdata"
-            f"    );",
-            f"        begin",
-        ])
-
-        if op.selected:
-            cell = op.selected.implementation_spec.get("cell_type", "?")
-            op_code = _compute_config_to_rtl_op(op)
-            lines.extend([
-                f"            // Mapped to: {cell} (delay={op.selected.delay_ns}ns)",
-                f"            // RA-BUS EXECUTE to PIM array",
-                f"            ra_addr  = 32'h00000000;  // PIM target, cell(0,0)",
-                f"            ra_wdata = {op_code};          // micro-op",
-                f"            $display(\"[STIM] [{op.op_index}] {op.op_type} → {cell}\");",
-            ])
-        else:
-            lines.extend([
-                f"            // UNMAPPED — skipping (reason: {op.failed_reason})",
-                f"            $display(\"[STIM] [{op.op_index}] {op.op_type} SKIPPED (unmapped)\");",
-            ])
-
-        lines.extend([
-            f"        end",
-            f"    endtask",
-            f"",
-        ])
-
-    # Top-level runner task
-    lines.extend([
-        "    // ── Top-level stimulus runner ──",
-        "    task tb_stimulus_run(",
-        "        ref logic [31:0] ra_addr,",
-        "        ref logic [63:0] ra_wdata",
+        "    localparam int DATA_W = 128;",
+        "",
+        "    logic        clk, rst_n;",
+        "    logic        ra_valid;",
+        "    logic [ 1:0] ra_cmd;",
+        "    logic [31:0] ra_addr;",
+        "    logic [DATA_W-1:0] ra_wdata;",
+        "    logic [DATA_W-1:0] ra_rdata;",
+        "    logic        ra_ready;",
+        "    logic [ 1:0] ra_resp;",
+        "    logic [255:0] hw_hash;",
+        "    logic        pim_state_stable;",
+        "    logic        logic_integrity_verified;",
+        "    logic        fuse_blown;",
+        "",
+        "    G1_Top_Integrated #(.DATA_W(DATA_W)) dut (",
+        "        .clk, .rst_n,",
+        "        .ra_valid, .ra_cmd, .ra_addr, .ra_wdata,",
+        "        .ra_rdata, .ra_ready, .ra_resp,",
+        "        .hardware_hash_in(hw_hash),",
+        "        .pim_state_stable, .logic_integrity_verified,",
+        "        .fuse_blown",
         "    );",
+        "",
+        "    initial clk = 1'b0;",
+        "    always #5 clk = ~clk;",
+        "",
+        "    // ── RA-BUS helpers (same protocol as tb_G1_Integrated) ──",
+        "    task ra_tick;",
+        "        begin @(posedge clk); #1; end",
+        "    endtask",
+        "",
+        "    task ra_write;",
+        "        input [31:0] addr; input [63:0] data;",
         "        begin",
-        "            $display(\"===== Auto-generated EDA Stimulus: " + result.design_name + " =====\");",
-        f"            $display(\"Material: {result.material} | Strategy: {result.strategy}\");",
-        f"            $display(\"Total ops: {len(result.ops)} | Mapped: {sum(1 for o in result.ops if o.selected)}\");",
-    ])
-
-    for op in result.ops:
-        safe_name = _sanitize_identifier(f"op{op.op_index}_{op.op_type}")
-        lines.append(f"            tb_stim_{safe_name}(ra_addr, ra_wdata);")
-
-    lines.extend([
-        "            $display(\"===== EDA Stimulus Complete =====\");",
+        "            @(negedge clk);",
+        "            ra_valid=1; ra_cmd=2'b01; ra_addr=addr; ra_wdata=data;",
+        "            ra_tick;",
+        "            @(negedge clk);",
+        "            ra_valid=0; ra_wdata=64'h0;",
         "        end",
         "    endtask",
+        "",
+        "    task ra_config;",
+        "        input [31:0] addr; input [63:0] data;",
+        "        begin",
+        "            @(negedge clk);",
+        "            ra_valid=1; ra_cmd=2'b11; ra_addr=addr; ra_wdata=data;",
+        "            ra_tick;",
+        "            @(negedge clk);",
+        "            ra_valid=0;",
+        "        end",
+        "    endtask",
+        "",
+        "    task ra_execute;",
+        "        input [31:0] addr; input [63:0] data;",
+        "        begin",
+        "            @(negedge clk);",
+        "            ra_valid=1; ra_cmd=2'b10; ra_addr=addr; ra_wdata=data;",
+        "            ra_tick;",
+        "            @(negedge clk);",
+        "            ra_valid=0;",
+        "        end",
+        "    endtask",
+        "",
+        "    // ── RA-BUS READ (ra_cmd=00) — sequencer SEQ_READ path ──",
+        "    task ra_read;",
+        "        input [31:0] addr;",
+        "        begin",
+        "            @(negedge clk);",
+        "            ra_valid=1; ra_cmd=2'b00; ra_addr=addr; ra_wdata=64'h0;",
+        "            ra_tick;",
+        "            repeat(2) @(posedge clk);",
+        "            @(negedge clk);",
+        "            ra_valid=0;",
+        "        end",
+        "    endtask",
+        "",
+        "    integer errors;",
+        "",
+        "    // ── Dataflow signal-value shadow registers (Stage 2) ──",
+        "    // One entry per causal signal; read back from predecessor cells.",
+        "    logic [DATA_W-1:0] sig_val [0:__SIG_NUM__-1];",
+        "",
+        "    initial begin",
+        "        errors = 0;",
+        "        ra_valid=0; ra_cmd=0; ra_addr=0; ra_wdata=0; hw_hash=256'h0;",
+        "        rst_n=0; #50; rst_n=1; #20;",
+        "",
+        f"        $display(\"===== EDA Stimulus: {result.design_name} =====\");",
+        f"        $display(\"Material: {result.material} | Strategy: {result.strategy}\");",
+        f"        $display(\"Total ops: {len(result.ops)} | Mapped: {sum(1 for o in result.ops if o.selected)}\");",
+        "",
+    ]
+
+    # ── Stage 2: dataflow-aware cell allocation + readback-pass-execute plan ──
+    if ir is None:
+        # Fallback: synthesize a minimal CausalIR from result.ops so the
+        # dataflow module still works when no IR object is available.
+        from EDA_fixed import CausalIR, CausalOp
+        ir_obj = CausalIR(
+            name=result.design_name,
+            inputs=list(result.ops[0].inputs) if result.ops else [],
+            outputs=list(result.ops[-1].outputs) if result.ops else [],
+            ops=[CausalOp(op_type=op.op_type,
+                          inputs=op.inputs, outputs=op.outputs)
+                 for op in result.ops],
+        )
+    else:
+        ir_obj = ir
+
+    from eda_dataflow import allocate_cells, build_exec_plan
+
+    alloc = allocate_cells(ir_obj, array_cols)
+    cell_names = {i: (op.selected.implementation_spec.get("cell_type", "?")
+                      if op.selected else "UNMAPPED")
+                  for i, op in enumerate(result.ops)}
+    plan = build_exec_plan(ir_obj, alloc, cell_names)
+
+    # Signal → sig_val index (stable mapping over all produced signals)
+    sig_index: dict = {}
+    next_idx = 0
+    for op in ir_obj.ops:
+        for out in op.outputs:
+            if out not in sig_index:
+                sig_index[out] = next_idx
+                next_idx += 1
+    sig_num = max(next_idx, 1)
+
+    for step in plan:
+        op_index = step.op_index
+        op = result.ops[op_index]
+        micro = step.micro_op
+        dr, dc = step.dst_cell
+        dst_addr = f"32'h{dr:02X}{dc:02X}0000"
+        src_desc = ", ".join(f"cell({r},{c})←{name}"
+                             for name, r, c in step.src_cells) or "none (external)"
+        if op.selected:
+            cell = op.selected.implementation_spec.get("cell_type", "?")
+            lines.extend([
+                f"        // ── [{op_index}] {op.op_type}: ({', '.join(op.inputs)}) → ({', '.join(op.outputs)}) ──",
+                f"        // mapped to {cell} (delay={op.selected.delay_ns}ns, power={op.selected.power_mw}mW)",
+                f"        // micro-op 0x{micro:02X} @ cell({dr},{dc}) | sources: {src_desc}",
+                f"        ra_config(32'h{op_index:08X}, {{40'h0, 8'd1, 8'h{micro:02X}, 6'h0, 2'b01}});",
+            ])
+            # Real dataflow: read back every predecessor cell via RA-BUS READ
+            if step.src_cells:
+                for name, sr, sc in step.src_cells:
+                    if name in sig_index:
+                        lines.append(
+                            f"        ra_read(32'h{sr:02X}{sc:02X}0000);  // read back {name}"
+                        )
+                        lines.append(
+                            f"        sig_val[{sig_index[name]}] = ra_rdata;"
+                        )
+                sname, sr, sc = step.src_cells[0]
+                if sname in sig_index:
+                    lines.append(
+                        f"        ra_execute({dst_addr}, sig_val[{sig_index[sname]}]);  // pass {sname} → {op.op_type}"
+                    )
+            else:
+                lines.append(f"        ra_execute({dst_addr}, 64'd{op_index});  // external input")
+            lines.append(f"        repeat(4) @(posedge clk);")
+            lines.append("")
+        else:
+            lines.extend([
+                f"        // [{op_index}] {op.op_type} UNMAPPED — skipped (reason: {op.failed_reason})",
+                "",
+            ])
+
+    # Inject the actual signal count into the sig_val declaration
+    lines_str = '\n'.join(lines)
+    lines_str = lines_str.replace("__SIG_NUM__", str(sig_num))
+    lines = lines_str.split('\n')
+
+    lines.extend([
+        "        // ── Audit pipeline settles ──",
+        "        repeat(40) @(posedge clk);",
+        "",
+        "        if (fuse_blown === 1'b0 && pim_state_stable === 1'b1)",
+        "            $display(\"[PASS] EDA stimulus completed: array stable, fuse intact\");",
+        "        else begin",
+        "            $display(\"[FAIL] fuse_blown=%b pim_state_stable=%b\", fuse_blown, pim_state_stable);",
+        "            errors = errors + 1;",
+        "        end",
+        "",
+        "        $display(\"===== Results: %0d errors =====\", errors);",
+        "        $finish;",
+        "    end",
+        "",
+        "endmodule",
     ])
     return '\n'.join(lines)
 
@@ -200,8 +380,16 @@ def _generate_tb_stimulus(result: MappingResult) -> str:
 # Component 3: syn_tcl.tcl (Yosys-compatible synthesis script)
 # ═══════════════════════════════════════════════════════════════════
 
-def _generate_syn_tcl(result: MappingResult, top_module: str = "G1_Top_Integrated") -> str:
-    """Generate a Yosys synthesis TCL script skeleton."""
+def _generate_syn_tcl(result: MappingResult,
+                      top_module: str = "G1_Top_Integrated",
+                      rtl_dir: str = "rtl") -> str:
+    """Generate a Yosys synthesis script skeleton.
+
+    Stage 1 (缝3 打通): RTL files are discovered dynamically via Tcl glob
+    instead of a hardcoded 6-file list (which previously dropped
+    ext_mem_controller and materica_compliance_unit). The generated
+    spl_config_pkg.sv is read FIRST so G1_Top's import resolves.
+    """
     lines = [
         "# ============================================================================",
         f"# Yosys synthesis script — Auto-generated from EDA mapping: {result.design_name}",
@@ -210,25 +398,18 @@ def _generate_syn_tcl(result: MappingResult, top_module: str = "G1_Top_Integrate
         f"# Usage: yosys -c syn_{_sanitize_identifier(result.design_name)}.tcl",
         "# ============================================================================",
         "",
-        "# ── Read design ──",
-    ]
-
-    # Collect RTL files
-    rtl_files = [
-        "rtl/ra_bus_arbiter.sv",
-        "rtl/spl_pim_sequencer.sv",
-        "rtl/spl_pim_compute_array.sv",
-        "rtl/spl_pim_cell.sv",
-        "rtl/spl_cim_causal_unit.sv",
-        "rtl/G1_Top_Integrated.sv",
-    ]
-
-    for f in rtl_files:
-        lines.append(f"read_sv {f}")
-
-    lines.extend([
+        "# ── Read design (dynamic discovery; EDA-generated config first) ──",
+        f"read_sv {rtl_dir}/spl_config_pkg.sv",
         "",
-        f"# ── Hierarchy −top {top_module}",
+        "set rtl_files [glob -nocomplain {rtl}/*.sv]",
+        "set rtl_files [lsearch -all -inline -not -exact $rtl_files {rtl}/spl_config_pkg.sv]",
+        "set rtl_files [lsearch -all -inline -not -exact $rtl_files {rtl}/tb_eda_stimulus.sv]",
+        "set rtl_files [lsearch -all -inline -not -exact $rtl_files {rtl}/tb_G1_Integrated.sv]",
+        "foreach f $rtl_files {",
+        "    read_sv $f",
+        "}",
+        "",
+        f"# ── Hierarchy -top {top_module}",
         f"hierarchy -top {top_module}",
         "",
         "# ── Process",
@@ -249,7 +430,7 @@ def _generate_syn_tcl(result: MappingResult, top_module: str = "G1_Top_Integrate
         "",
         "# ── Timing (no SDC loaded; add .sdc file when available)",
         "# read_sdc constraints/g1_timing.sdc",
-    ])
+    ]
     return '\n'.join(lines)
 
 
@@ -260,7 +441,10 @@ def _generate_syn_tcl(result: MappingResult, top_module: str = "G1_Top_Integrate
 def generate_rtl_artifacts(
     result: MappingResult,
     output_dir: str = "outputs/rtlgen/",
-    top_module: str = "G1_Top_Integrated"
+    top_module: str = "G1_Top_Integrated",
+    array_rows: int = 64,
+    array_cols: int = 64,
+    ir: object = None
 ) -> dict:
     """
     Generate all RTL artifacts from a MappingResult.
@@ -269,6 +453,9 @@ def generate_rtl_artifacts(
         result: MappingResult from eda_mapper
         output_dir: Directory to write generated files
         top_module: Name of the top-level RTL module
+        array_rows: PIM array geometry (written into spl_config_pkg)
+        array_cols: PIM array geometry (written into spl_config_pkg)
+        ir: CausalIR instance (used by the dataflow-aware stimulus generator)
 
     Returns:
         dict mapping artifact name to absolute file path
@@ -280,13 +467,13 @@ def generate_rtl_artifacts(
     # 1. Config package
     pkg_path = os.path.join(output_dir, "spl_config_pkg.sv")
     with open(pkg_path, 'w', encoding='utf-8') as f:
-        f.write(_generate_config_pkg(result))
+        f.write(_generate_config_pkg(result, array_rows, array_cols))
     artifacts["config_pkg"] = os.path.abspath(pkg_path)
 
-    # 2. Stimulus file
-    stim_path = os.path.join(output_dir, "tb_stimulus.sv")
+    # 2. Stimulus testbench
+    stim_path = os.path.join(output_dir, "tb_eda_stimulus.sv")
     with open(stim_path, 'w', encoding='utf-8') as f:
-        f.write(_generate_tb_stimulus(result))
+        f.write(_generate_tb_stimulus(result, array_rows, array_cols, ir))
     artifacts["tb_stimulus"] = os.path.abspath(stim_path)
 
     # 3. Synthesis TCL
