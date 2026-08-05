@@ -1,8 +1,9 @@
 {
-  "architecture": "SPL-Core-G1",
+  "architecture": "SPL-TCU-G1",
   "version": "1.0.0-Commercial",
   "logic_mode": "Second-Perspective",
-  "commercial_config": {
+  "product_class": "Hardware Causal-Audit Trusted Compute Unit (TCU)",
+  "_roadmap_commercial_config": {
     "tile_rows": 64,
     "tile_cols": 64,
     "total_tiles": 4096,
@@ -73,7 +74,7 @@
     {
       "op": "COMPUTE",
       "code": "0x10",
-      "desc": "通用计算：ADD/SUB/MUL/CMP/LOGIC 五类算数逻辑操作，产出 P→Q 因果对"
+      "desc": "可信计算原语：ADD/SUB/MUL/CMP/LOGIC 五类操作，产出 P→Q 因果审计对"
     },
     {
       "op": "NS",

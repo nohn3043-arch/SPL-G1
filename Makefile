@@ -78,7 +78,7 @@ SIM_BIN = g1_sim
 WAVE_FILE = g1_integrated_wave.vcd
 .PHONY: sim
 sim:
-	$(IVERILOG) -g2012 -o $(SIM_BIN) rtl/G1_Top_Integrated.sv rtl/ra_bus_arbiter.sv rtl/spl_pim_sequencer.sv rtl/spl_pim_cell.sv rtl/spl_pim_compute_array.sv rtl/spl_cim_causal_unit.sv rtl/tb_G1_Integrated.sv
+	$(IVERILOG) -g2012 -o $(SIM_BIN) rtl/G1_Top_Integrated.sv rtl/ra_bus_arbiter.sv rtl/spl_pim_sequencer.sv rtl/spl_pim_cell.sv rtl/spl_pim_compute_array.sv rtl/spl_cim_causal_unit.sv rtl/ext_mem_controller.sv rtl/materica_compliance_unit.sv rtl/tb_G1_Integrated.sv
 	$(VVP) $(SIM_BIN)
 	@echo "仿真完成，波形文件: $(WAVE_FILE)"
 
