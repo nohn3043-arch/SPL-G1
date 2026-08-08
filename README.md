@@ -6,6 +6,8 @@
   <img src="https://img.shields.io/badge/trusted--compute-unit-D4AF37?style=flat-square" alt="trusted-compute-unit">
   <img src="https://img.shields.io/badge/causal-audit-D4AF37?style=flat-square" alt="causal-audit">
   <img src="https://img.shields.io/badge/pim-array-D4AF37?style=flat-square" alt="pim-array">
+  <img src="https://img.shields.io/badge/fp16-IEEE754-D4AF37?style=flat-square" alt="fp16">
+  <img src="https://img.shields.io/badge/splcc-v0.1-D4AF37?style=flat-square" alt="splcc">
 </p>
 
 <blockquote align="center">
@@ -18,6 +20,10 @@
 
 <p style="font-size:15px;line-height:1.8;color:#2C2C2C">
 SPL-G1 is a <strong>hardware causal-audit Trusted Compute Unit (TCU)</strong> — not a general-purpose CPU/GPU/NPU, but a dedicated security primitive that provides <em>provable hardware-level causal audit</em> across the entire compute lifecycle. Built on a 2D PIM (Processing-In-Memory) array with the RA-BUS unified address fabric, it combines computational capability (tri-mode SCALAR / VECTOR / MATRIX) with hardware-enforced causal constraint checking, identity anchoring (256-bit), and an irreversible SBC fuse mechanism. Every operation produces an auditable P→Q causal pair, every violation is permanently locked down.
+</p>
+
+<p style="font-size:15px;line-height:1.8;color:#2C2C2C">
+<strong>Phase A — TCU core capability loop — is complete.</strong> Capability milestones A1 control-flow, A2 true FP16, A3 <code>splcc</code> compiler, A4 data channel, A6 SBC fuse are delivered and verified in RTL simulation: <strong>0 errors, 7/7 tests PASS</strong> (Icarus Verilog). A5 causal constraints are implemented at the v2 level (hard-constraint all-ones check + dependency-mask cascade); the v1 programmable <code>audit_constraint_mask</code> / per-class forbid path is planned (see note below).
 </p>
 
 <p align="center">
@@ -72,8 +78,12 @@ python eda_cli.py --desc examples/causal_chain_demo.json \
 
 # RTL simulation (Icarus Verilog 12.0+ required)
 # Add to PATH if needed: $env:PATH = "C:\iverilog\bin;$env:PATH"
-make sim          # compile + run: 10 tests, all passed (Phase A v3)
+make sim          # compile + run: 7/7 tests PASS, 0 errors (Phase A v5)
 make wave         # open waveforms in GTKWave
+
+# Compile a C-subset program to SPL-G1 microcode and verify semantics
+make splcc-bridge                 # C → microcode bridge (verify mode)
+python splcc.py tests/loop_sub.c --verify
 ```
 
 <p align="center">— ✦ —</p>
@@ -84,17 +94,20 @@ make wave         # open waveforms in GTKWave
 
 - **Hardware causal-audit pipeline** — every compute step carries an observable P→Q causal trail; audit failure → SBC fuse blown → output permanently zeroed (Materica #4).
 - **Tri-mode PIM compute array** — 4×4 storage-in-memory grid (Cell v2: 64-bit local store + 32‑op ALU), with SCALAR / VECTOR / MATRIX execution modes, 8‑bit neighbour interconnect, per-col vec_sum, and full-array mat_total reduction.
-- **Sequencer v4** — parameterized 256‑entry program memory with JMP / JZ / JNZ / CALL / RET / HALT control‑flow instructions and an 8‑deep return stack.
-- **RA-BUS arbiter** — 4‑target address‑decoded bus fabric (PIM / Audit / Identity / External) with READ / WRITE / EXECUTE / CONFIG transaction types.
-- **Identity anchor** — 256‑bit hardware identity verification, 64‑cycle nibble‑by‑nibble handshake.
-- **SBC fuse** — audit failure → `fuse_blown` latch → output data forced to zero; recovery only via hardware reset.
+- **True FP16 (IEEE 754 half-precision)** — sign / 5-bit exponent / 10-bit mantissa, subnormal / NaN / ±Inf, `roundTiesToEven`. Real `FP16_ADD / SUB / MUL / CMP / MAC` semantics replace integer stubs (A2).
+- **Causal constraints (v2)** — `spl_cim_causal_unit` v2 performs hard-constraint checking: `constraint_pass = (constraint_bits == 64'hFFFF_FFFF_FFFF_FFFF)` plus a 56-bit `dep_mask` dependency check with cascade invalidation. Pass-through (bridge) mode has `constraint_bits` all-1s → always passes. *Note: the IMPROVEMENT_PLAN's programmable `audit_constraint_mask` (per-class FP16/VECTOR/MATRIX forbid + `constraint_bits_latch`) is not yet in the RTL — the constraint unit currently only distinguishes "all-allowed" vs "configured rule".* (A5)
+- **Sequencer v4** — parameterized 256‑entry program memory with JMP / JZ / JNZ / CALL / RET / HALT control‑flow instructions, 8‑deep return stack, OOB protection. The RA-BUS READ transaction (`SEQ_READ`) state is present (annotated v5) for the data channel (A4).
+- **RA-BUS arbiter v1** — 4‑target address‑decoded bus fabric (PIM / Audit / Identity / External) with READ / WRITE / EXECUTE / CONFIG transaction types.
+- **Identity anchor v1** — 256‑bit hardware identity verification, 64‑cycle nibble‑by‑nibble handshake.
+- **SBC fuse** — audit failure → `fuse_blown` latch → output data forced to zero; recovery only via hardware reset (A6).
 - **EDA toolchain (pure Python, stdlib‑only)** — `eda_cli.py` drives parse → map → build → export → RTL generation:
   - `eda_parser.py` — reads causal‑design JSON
   - `eda_mapper.py` — maps operators to PDK variants
   - `eda_exporter.py` — emits netlist and reports
   - `eda_rtlgen.py` — emits `spl_config_pkg.sv` + `tb_stimulus.sv` + `syn_tcl.tcl`
   - `EDA_fixed.py` — Material Library + PAL routines
-- **RTL (SystemVerilog)** — `G1_Top_Integrated.sv` (full integrated top, v3), `ra_bus_arbiter.sv`, `spl_pim_compute_array.sv` (v2.1), `spl_pim_sequencer.sv` (v4), `spl_pim_cell.sv` (v2), `spl_cim_causal_unit.sv` (v2), `ext_mem_controller.sv`, `materica_compliance_unit.sv`, with integration testbench `tb_G1_Integrated.sv` (v3, 10 tests).
+- **splcc — C-subset compiler v0.1** — `splcc.py` turns a restricted C dialect (int vars, `for` / `while` / `if-else`, arithmetic, comparison) into SPL-G1 microcode CONFIG words, with an `--verify` interpreter mode (`splcc_bridge.py` wraps it for the test flow). C→microcode proven feasible; arrays/pointers/functions are v0.2+ (A3).
+- **RTL (SystemVerilog)** — `G1_Top_Integrated.sv` (full integrated top, v3), `ra_bus_arbiter.sv`, `spl_pim_compute_array.sv` (v2.1), `spl_pim_sequencer.sv` (v5), `spl_pim_cell.sv` (v2, FP16), `spl_cim_causal_unit.sv` (v2), `ext_mem_controller.sv`, `materica_compliance_unit.sv`, with integration testbench `tb_G1_Integrated.sv` (v3, 7 tests, 0 errors).
 - **PDK packs** — `silicon_cim_v1.json` (28nm CIM) and `optical_mzi_photonics_v1.json` (photonic).
 
 </div>
@@ -109,8 +122,13 @@ make wave         # open waveforms in GTKWave
 | `make demo-audit` | Cognitive‑audit demo (low‑power optimization) |
 | `make demo-optical` | Photonic PDK demo |
 | `make demo-full` | Full pipeline (COMPUTE operator + `params` consumption) |
+| `make demo-hetero` | Heterogeneous single-die mixed-material demo |
 | `make build DESC=<json>` | Compile a custom causal design |
 | `make sim` / `make wave` | RTL simulation + open waveform |
+| `make rtlgen` / `make rtlgen-apply` | EDA → RTL package generation (apply patches to RTL) |
+| `make pdk-report` / `make multi-pdk` | Material coverage matrix / multi-PDK batch compare |
+| `make splcc-bridge` | Run `splcc_bridge.py tests/loop_sub.c --verify --emit outputs` |
+| `make clean` | Remove build artifacts and `outputs/*.json` |
 
 > RTL simulation needs **Icarus Verilog** (`iverilog` / `vvp`) and optionally **GTKWave** for `.vcd` waveforms. Install: `winget install icarusVerilog` or download from [bleyer.org/icarus](https://bleyer.org/icarus/).
 
@@ -131,6 +149,51 @@ python eda_cli.py \
 
 Strategy options: `min_delay` · `min_power`. Example designs live in `examples/` (`causal_chain_demo.json`, `cognitive_audit_demo.json`, `full_pipeline_demo.json`).
 
+```bash
+# Compile a C-subset program to microcode and verify its semantics
+python splcc.py tests/loop_sub.c --verify
+#  → prints interpretation of each variable after execution
+
+python splcc.py tests/loop_sub.c --json
+#  → emits CONFIG addr/wdata pairs as JSON
+```
+
+</div>
+
+## ✦ Application Paths: Security Audit Node
+
+<div style="max-width:880px;margin:0 auto;padding:0 16px">
+
+- **Industrial safety (audit ledger)** — each process step → P→Q causal record → audit against safety spec → violation/skip → `fuse_blown` → emergency stop + tamper-proof violation log.
+- **Compliance computing** — cloud trust question "did the server tamper with the AI inference result?" → TCU side-band audit: every inference step's P→Q label is publicly verifiable.
+- **Supply-chain traceability** — "where did this batch come from?" → `State_Anchor` + full-chain P→Q tracking = forgery cannot be covered.
+
+</div>
+
+## ✦ Scale Ladder & Milestones
+
+<div style="max-width:880px;margin:0 auto;padding:0 16px">
+
+**Scale ladder**
+
+| Level | Scale | Working set | Runs what | Milestone |
+|-------|-------|-------------|-----------|-----------|
+| L0 prototype | 4×4 = 16 cells | 128 B | demo-grade integer/FP16 ops | ✅ current |
+| L1 embedded core | 16×16 = 256 cells | 4 KB | real MCU-class program (needs A3 compiler) | Phase B |
+| L2 AI accelerator | 64×64 = 4096 cells | 64 KB | tiny MLP, sensor-end classification | Phase C |
+| L3 storage-class | 262,144 cells | 2 MB | industrial audit rulebase + batch trace | needs tape-out |
+
+**Milestones**
+
+| Milestone | Definition | Verification |
+|-----------|------------|--------------|
+| M1: TCU trust closure | A2+A3+A4+A5 complete | sim runs audit loop, fuse closes |
+| M2: first compiler | splcc emits runnable microcode | `for` loop sim passes |
+| M3: Tile expansion | 16×16 array | all modes tested |
+| M4: Synthesis result | Yosys area/freq/power | tape-out feasibility |
+
+> Known gaps (post Phase A): C5 scale too small (128 B work set); C6 no timing/area/power synthesis yet (Yosys/DC not run).
+
 </div>
 
 ## ✦ Project Structure
@@ -138,27 +201,30 @@ Strategy options: `min_delay` · `min_power`. Example designs live in `examples/
 ```
 SPL-G1-General-purpose-processor/
 ├── eda_cli.py / eda_parser.py / eda_mapper.py / eda_exporter.py /
-│   eda_rtlgen.py / EDA_fixed.py         # EDA toolchain (pure Python)
-├── Makefile                             # demo / build / sim targets
+│   eda_rtlgen.py / EDA_fixed.py / eda_dataflow.py / eda_pdk_report.py
+│                                   # EDA toolchain (pure Python)
+├── splcc.py / splcc_bridge.py      # C-subset → SPL-G1 microcode compiler (v0.1)
+├── Makefile                        # demo / build / sim / splcc targets
 ├── rtl/
-│   ├── G1_Top_Integrated.sv            # Full integrated top v3 (RA-BUS + PIM + Audit + Anchor + Fuse)
-│   ├── ra_bus_arbiter.sv               # RA-BUS 4-target arbiter + address decoder
-│   ├── spl_pim_cell.sv                 # PIM Cell v2: 64-bit store + 32-op ALU + neighbour
-│   ├── spl_pim_compute_array.sv        # PIM Array v2.1: 4×4, tri-mode, pim_flag output
-│   ├── spl_pim_sequencer.sv            # Sequencer v4: 256-entry prog mem + control-flow
-│   ├── spl_cim_causal_unit.sv          # Causal Audit Unit v2: constraint check + cascade
-│   ├── ext_mem_controller.sv           # External memory controller (AXI4, RA-BUS target 3)
-│   ├── materica_compliance_unit.sv     # Materica 4-gate hardware compliance checker
-│   ├── tb_G1_Integrated.sv             # Integration testbench v3 (10 tests, 0 errors)
-│   └── tb_pim_compute_array.sv         # PIM array standalone testbench
-├── pdk/                                # silicon_cim_v1.json, optical_mzi_photonics_v1.json
-├── examples/                           # causal / cognitive-audit / full-pipeline demos
-├── outputs/                            # generated netlists / VCD waveforms / RTL artifacts
-├── docs/                               # ra_bus_protocol.md
-├── SPL-Core.json                       # ISA definition (v0.3: 16 instructions + control-flow)
-├── State_Anchor.pdl                    # 256-bit hardware identity anchor protocol
-├── Materica-specification              # 4-requirement material causality mapping spec
-├── IMPROVEMENT_PLAN.md                 # Current improvement roadmap (v4.0, TCU positioning)
+│   ├── G1_Top_Integrated.sv        # Full integrated top v3 (RA-BUS + PIM + Audit + Anchor + Fuse)
+│   ├── ra_bus_arbiter.sv           # RA-BUS 4-target arbiter + address decoder
+│   ├── spl_pim_cell.sv             # PIM Cell v2: 64-bit store + 32-op ALU + neighbour + FP16
+│   ├── spl_pim_compute_array.sv    # PIM Array v2.1: 4×4, tri-mode, pim_flag output
+│   ├── spl_pim_sequencer.sv        # Sequencer v4: 256-entry prog mem + control-flow (+ v5 READ state)
+│   ├── spl_cim_causal_unit.sv      # Causal Audit Unit v2: constraint check + cascade
+│   ├── ext_mem_controller.sv       # External memory controller (AXI4, RA-BUS target 3)
+│   ├── materica_compliance_unit.sv # Materica 4-gate hardware compliance checker
+│   ├── tb_G1_Integrated.sv         # Integration testbench v3 (7 tests, 0 errors)
+│   └── tb_pim_compute_array.sv     # PIM array standalone testbench
+├── pdk/                            # silicon_cim_v1.json, optical_mzi_photonics_v1.json
+├── examples/                       # causal / cognitive-audit / full-pipeline / heterogeneous demos
+├── tests/                          # loop_sub.c (splcc test source)
+├── outputs/                        # generated netlists / VCD waveforms / RTL artifacts
+├── docs/                           # ra_bus_protocol.md, BASELINE.md, EDA_ITERATION_DONE.md, history/
+├── SPL-Core.json                   # ISA definition (v0.3: 16 instructions + control-flow)
+├── State_Anchor.pdl                # 256-bit hardware identity anchor protocol
+├── Materica-specification          # 4-requirement material causality mapping spec
+├── IMPROVEMENT_PLAN.md             # Current roadmap (v5.0, TCU positioning, Phase A done)
 └── README.md
 ```
 
