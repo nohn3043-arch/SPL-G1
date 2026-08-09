@@ -1,0 +1,60 @@
+{
+  "chip": "SPL-G1",
+  "version": "1.0.0-adaptation",
+  "basis": "derived from rtl/*.sv logic capabilities",
+  "description": "芯片逻辑能力需求基准。任何材料若承载 SPL-G1 逻辑，必须满足以下能力需求（源自 rtl/ 实际实现）。",
+
+  "materica_constraints": {
+    "M1_logic_state_stability": {
+      "desc": "至少两种离散稳定物理态承载 Φ 审计谓词",
+      "required_states": 2,
+      "activation_energy_over_noise_min": 10.0,
+      "rtl_basis": "spl_pim_cell.sv: local_store 0/1, p_tag/q_tag 8-bit"
+    },
+    "M2_causal_directional_routing": {
+      "desc": "必须支持受控定向信号承载 RA-BUS 因果标签，禁止各向同性扩散",
+      "directional_signal_required": true,
+      "isotropic_diffusion_forbidden": true,
+      "rtl_basis": "ra_bus_arbiter.sv + spl_pim_compute_array.sv: row_data_in->out / col_data_in->out 显式定向"
+    },
+    "M3_pim_proximity": {
+      "desc": "执行单元与存储单元纳米级共位，数据搬运功耗趋近 0",
+      "pim_co_location_required": true,
+      "transport_energy_target_uj": 0.0,
+      "rtl_basis": "spl_pim_cell.sv: ALU + local_store 同单元; EVOLVE 就地演化"
+    },
+    "M4_security_boundary_irreversibility": {
+      "desc": "物理破坏必须导致永久逻辑锁定，软件/外部命令不可恢复",
+      "irreversible_boundary_required": true,
+      "recovery_only_hardware_reset": true,
+      "rtl_basis": "G1_Top_Integrated.sv: fuse_blown latch, output zeroed, reset only"
+    }
+  },
+
+  "compute_requirements": {
+    "data_width_bits": 128,
+    "neighbour_interconnect_bits": 8,
+    "alu_op_count": 32,
+    "precision_supported": ["INT8", "INT16", "INT32", "FP16"],
+    "execution_modes": ["SCALAR", "VECTOR", "MATRIX"],
+    "mode": "reference",
+    "note": "上述为芯片 RTL 参考实现规格（硅基档位），非跨材料硬门禁。不同材料可按自身能力声明规格档位，在满足 M1-M4 逻辑门禁的前提下参与映射寻优。",
+    "rtl_basis": "spl_pim_cell.sv: 32-op ALU, FP16 IEEE-754, 8-bit neighbour; spl_pim_compute_array.sv: tri-mode"
+  },
+
+  "audit_requirements": {
+    "causal_record_bits": 256,
+    "constraint_mask_bits": 64,
+    "dependency_mask_bits": 56,
+    "cascade_invalidation": true,
+    "mode": "reference",
+    "note": "上述为芯片 RTL 参考实现规格，非跨材料硬门禁。材料可声明自身审计位宽，自洽即可。",
+    "rtl_basis": "spl_cim_causal_unit.sv: constraint_bits==all-ones, dep_mask, cascade"
+  },
+
+  "io_requirements": {
+    "host_bus": "RA-BUS (4 targets: PIM/Audit/Identity/External)",
+    "external_memory": "AXI4 / DMA / 16MB SRAM model",
+    "rtl_basis": "ra_bus_arbiter.sv + ext_mem_controller.sv"
+  }
+}

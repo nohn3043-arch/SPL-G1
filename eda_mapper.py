@@ -21,6 +21,8 @@ from EDA_fixed import (
     MaterialLibrary, REVERSE_OP_MAPPING,
     validate_op_params, params_affinity_score   # v0.4.0
 )
+# ── 芯片逻辑能力驱动的材料适配层 (v1.0.0) ──
+from chip_adaptation import ChipAdapter, ChipRequirements
 
 
 class MappingStrategy(Enum):
@@ -66,8 +68,23 @@ class MappingResult:
     materials_used: set = field(default_factory=set)
     cross_material_edges: int = 0
     material_boundary_pairs: dict = field(default_factory=dict)
+    # ── 芯片逻辑能力适配 (v1.0.0) ──
+    chip_compatible: bool = True
+    chip_failed: List[str] = field(default_factory=list)
+    chip_notes: List[str] = field(default_factory=list)  # 计算/审计规格软检查差异
 
     def summary_text(self) -> str:
+        # 芯片逻辑能力适配门禁：不兼容 → 直接判定失败
+        if not self.chip_compatible:
+            status = "FAILED (芯片逻辑能力不兼容)"
+            return (
+                f"映射结果 [{status}]\n"
+                f"  设计: {self.design_name}\n"
+                f"  材料: {self.material}\n"
+                f"  芯片逻辑适配: 拒绝\n"
+                f"  不兼容原因 ({len(self.chip_failed)}):\n"
+                + "".join(f"    - {f}\n" for f in self.chip_failed)
+            )
         status = "OK" if self.all_passed else f"FAILED ({self.unmapped_count} 个算子未映射)"
         het = ""
         if len(self.materials_used) > 1:
@@ -162,7 +179,8 @@ def map_causal_ir(
     ir: CausalIR,
     material: str,
     constraints: PhysicalConstraints,
-    strategy: MappingStrategy = MappingStrategy.MIN_DELAY
+    strategy: MappingStrategy = MappingStrategy.MIN_DELAY,
+    pdk_data: Optional[Dict] = None
 ) -> MappingResult:
     """
     对 CausalIR 执行工艺映射。
@@ -172,10 +190,27 @@ def map_causal_ir(
         material: 目标材料名称（如 "optical_mzi_photonics_v1"）
         constraints: 物理约束
         strategy: 映射策略
+        pdk_data: PDK JSON 数据。若提供，则先执行「芯片逻辑能力适配」门禁，
+                  材料不承载 SPL-G1 芯片逻辑能力时直接拒绝，不再做性能映射。
 
     Returns:
         MappingResult 包含每个算子的变体选择及汇总
     """
+    # ── 芯片逻辑能力适配门禁 (v1.0.0) ──
+    chip_failed: List[str] = []
+    chip_notes: List[str] = []
+    chip_compatible = True
+    if pdk_data is not None:
+        try:
+            adapter = ChipAdapter()
+            adapt_res = adapter.adapt(material, pdk_data)
+            chip_compatible = adapt_res.compatible
+            chip_failed = list(adapt_res.failed)
+            chip_notes = list(adapt_res.notes)
+        except Exception as e:  # 适配层异常不应阻塞既有流程，仅记录
+            chip_compatible = True
+            chip_failed = [f"芯片适配层异常: {e}"]
+
     op_mappings: List[OpMapping] = []
     total_delay = 0.0
     total_power = 0.0
@@ -274,9 +309,12 @@ def map_causal_ir(
         total_power_mw=total_power,
         total_area_um2=total_area,
         min_snr_db=min_snr if min_snr != float('inf') else 0.0,
-        all_passed=(unmapped == 0),
+        all_passed=(chip_compatible and unmapped == 0),
         unmapped_count=unmapped,
         materials_used=materials_used,
         cross_material_edges=cross_edges,
-        material_boundary_pairs=boundary_pairs
+        material_boundary_pairs=boundary_pairs,
+        chip_compatible=chip_compatible,
+        chip_failed=chip_failed,
+        chip_notes=chip_notes
     )

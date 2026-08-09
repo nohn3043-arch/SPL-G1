@@ -270,9 +270,10 @@ def main():
                 print(f"[错误] 加载 {pf} 失败: {e}", file=sys.stderr)
                 continue
             with open(pf, 'r', encoding='utf-8') as f:
-                mat = json.load(f).get("material", os.path.basename(pf))
+                pdk_data = json.load(f)
+                mat = pdk_data.get("material", os.path.basename(pf))
             try:
-                res = map_causal_ir(ir, mat, load_constraints(args), strategy)
+                res = map_causal_ir(ir, mat, load_constraints(args), strategy, pdk_data=pdk_data)
                 results.append((mat, res))
                 print(f"  [{mat}] ok={res.all_passed} "
                       f"delay={res.total_delay_ns:.1f}ns power={res.total_power_mw:.1f}mW "
@@ -295,7 +296,13 @@ def main():
 
     # === 单材料模式：Step 2 映射 + Step 3 输出 + Step 4 RTL 生成 ===
     print(f"\n[映射] 材料={material} 策略={strategy.value}")
-    result = map_causal_ir(ir, material, constraints, strategy)
+    with open(args.pdk, 'r', encoding='utf-8') as f:
+        pdk_data = json.load(f)
+    result = map_causal_ir(ir, material, constraints, strategy, pdk_data=pdk_data)
+    if not result.chip_compatible:
+        print(f"\n[芯片逻辑适配] [INCOMPATIBLE] 材料 {material} 不承载 SPL-G1 芯片逻辑能力，映射已拒绝：")
+        for fail in result.chip_failed:
+            print(f"    - {fail}")
 
     export_and_report(
         result,

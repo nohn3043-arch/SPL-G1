@@ -1,5 +1,35 @@
 {
   "material": "silicon_cim_28nm_v1",
+  "materica": {
+    "M1_logic_state_stability": {
+      "stable_states": 2,
+      "activation_energy_over_noise": 12.0
+    },
+    "M2_causal_directional_routing": {
+      "directional_signal": true,
+      "isotropic_diffusion": false
+    },
+    "M3_pim_proximity": {
+      "pim_co_location": true,
+      "transport_energy_uj": 0.0
+    },
+    "M4_security_boundary_irreversibility": {
+      "irreversible_boundary": true
+    }
+  },
+  "compute": {
+    "data_width_bits": 128,
+    "neighbour_interconnect_bits": 8,
+    "alu_op_count": 32,
+    "precision_supported": ["INT8", "INT16", "INT32", "FP16"],
+    "execution_modes": ["SCALAR", "VECTOR", "MATRIX"]
+  },
+  "audit": {
+    "causal_record_bits": 256,
+    "constraint_mask_bits": 64,
+    "dependency_mask_bits": 56,
+    "cascade_invalidation": true
+  },
   "units": {
     "delay": "ns",
     "power": "mw",

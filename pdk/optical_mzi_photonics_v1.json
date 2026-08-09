@@ -1,6 +1,36 @@
 {
   "material": "optical_mzi_photonics_v1",
   "note": "SPL-G1 光子工艺库实例（v1）。本文件数值为示例占位值，用于打通 EDA_fixed.py 的 PAL 加载与帕累托探索流程；流片前须由晶圆厂/后端团队以实测值替换。",
+  "materica": {
+    "M1_logic_state_stability": {
+      "stable_states": 2,
+      "activation_energy_over_noise": 11.0
+    },
+    "M2_causal_directional_routing": {
+      "directional_signal": true,
+      "isotropic_diffusion": false
+    },
+    "M3_pim_proximity": {
+      "pim_co_location": true,
+      "transport_energy_uj": 0.0
+    },
+    "M4_security_boundary_irreversibility": {
+      "irreversible_boundary": true
+    }
+  },
+  "compute": {
+    "data_width_bits": 64,
+    "neighbour_interconnect_bits": 8,
+    "alu_op_count": 24,
+    "precision_supported": ["INT8", "INT16", "INT32"],
+    "execution_modes": ["SCALAR", "VECTOR"]
+  },
+  "audit": {
+    "causal_record_bits": 128,
+    "constraint_mask_bits": 32,
+    "dependency_mask_bits": 28,
+    "cascade_invalidation": false
+  },
   "units": {
     "delay": "ns",
     "power": "mw",
