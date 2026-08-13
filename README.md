@@ -1,236 +1,97 @@
 <p align="center">
-  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/banner.png?format=raw" alt="SPL-G1 banner" style="width:100%">
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/trusted--compute-unit-D4AF37?style=flat-square" alt="trusted-compute-unit">
-  <img src="https://img.shields.io/badge/causal-audit-D4AF37?style=flat-square" alt="causal-audit">
-  <img src="https://img.shields.io/badge/pim-array-D4AF37?style=flat-square" alt="pim-array">
-  <img src="https://img.shields.io/badge/fp16-IEEE754-D4AF37?style=flat-square" alt="fp16">
-  <img src="https://img.shields.io/badge/splcc-v0.1-D4AF37?style=flat-square" alt="splcc">
+  <img src="https://img.shields.io/badge/SPL--G1-D4AF37?style=flat-square" alt="SPL-G1">  <img src="https://img.shields.io/badge/causal--audit-D4AF37?style=flat-square" alt="causal-audit">  <img src="https://img.shields.io/badge/fpga--ready-D4AF37?style=flat-square" alt="fpga-ready">
 </p>
 
 <blockquote align="center">
-  <em>Hardware Causal-Audit Trusted Compute Unit (TCU) · Second-Perspective Logic Engine</em>
+  <em>通用因果审计硬件流水线</em>
 </blockquote>
 
 <div style="max-width:880px;margin:0 auto;padding:0 16px">
 
-## ✦ About
+## ✦ 关于
 
-<p style="font-size:15px;line-height:1.8;color:#2C2C2C">
-SPL-G1 is a <strong>hardware causal-audit Trusted Compute Unit (TCU)</strong> — not a general-purpose CPU/GPU/NPU, but a dedicated security primitive that provides <em>provable hardware-level causal audit</em> across the entire compute lifecycle. Built on a 2D PIM (Processing-In-Memory) array with the RA-BUS unified address fabric, it combines computational capability (tri-mode SCALAR / VECTOR / MATRIX) with hardware-enforced causal constraint checking, identity anchoring (256-bit), and an irreversible SBC fuse mechanism. Every operation produces an auditable P→Q causal pair, every violation is permanently locked down.
-</p>
+<p style="font-size:15px;line-height:1.8;color:#2C2C2C">SPL-G1 是<strong>因果审计硬件流水线</strong>：将第二视角因果审计引擎编码为可在 FPGA / ASIC 上确定性运行的流水线。它把"叙事剥离 → 内隐假设透视 → 脆弱性锁存 → 因果链同步 → 状态锚定"五个算子固化进硬件，使每一条因果链都可被独立验证、哈希链式记录、且不被篡改。</p>
 
-<p style="font-size:15px;line-height:1.8;color:#2C2C2C">
-<strong>Phase A — TCU core capability loop — is complete.</strong> Capability milestones A1 control-flow, A2 true FP16, A3 <code>splcc</code> compiler, A4 data channel, A6 SBC fuse are delivered and verified in RTL simulation: <strong>0 errors, 7/7 tests PASS</strong> (Icarus Verilog). A5 causal constraints are implemented at the v2 level (hard-constraint all-ones check + dependency-mask cascade); the v1 programmable <code>audit_constraint_mask</code> / per-class forbid path is planned (see note below).
-</p>
-
-<p align="center">
-  <img src="https://sourceforge.net/p/spl-g1/git/ci/main/tree/assets/overview.svg?format=raw" alt="SPL-G1 overview" style="width:100%">
-</p>
+<p style="font-size:15px;line-height:1.8;color:#2C2C2C">软件层仍是参考实现，硬件层是可综合的寄存器传输级（RTL）描述。两者对齐同一套确定性语义，因此软件结果可在硬件上复现。</p>
 
 </div>
 
 <p align="center">— ✦ —</p>
 
-## ✦ Positioning: What SPL-G1 Is (and Isn't)
+## ✦ 五算子流水线
 
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
-
-<table>
-<tr><th>✅ Is</th><th>❌ Is Not</th></tr>
-<tr>
-<td>A hardware causal-audit Trusted Compute Unit (TCU)</td>
-<td>A desktop CPU running Linux or x86 applications</td>
-</tr>
-<tr>
-<td>A verifiable compute primitive with full-lifecycle P→Q provenance</td>
-<td>A GPU card with thousands of cores and CUDA stack</td>
-</tr>
-<tr>
-<td>A tri-mode PIM array (SCALAR / VECTOR / MATRIX) with per-op audit</td>
-<td>A datacenter-scale NPU accelerator for LLM inference</td>
-</tr>
-<tr>
-<td>Intended as an embedded security root for compliance computing, safety-critical audit, and attestation workloads</td>
-<td>A replacement for any mainstream microprocessor</td>
-</tr>
-</table>
-
-</div>
+| 阶段 | 算子 | 硬件单元 | 功能 |
+|---|---|---|---|
+| 1 | 叙事剥离 NS | `narrative_strip` | 去除修辞与模糊量词，输出结构化因果事件 |
+| 2 | 内隐假设透视 IAP | `assumption_lens` | 提取未声明假设，标注特权与循环依赖 |
+| 3 | 脆弱性锁存 LCH | `fragility_latch` | 计算每个假设的崩塌概率 ΔD，定位最弱变量 |
+| 4 | 因果链同步 CCS | `causal_sync` | 逆反校验 + 反事实重放 + 黑洞检测 |
+| 5 | 状态锚定 STATE | `state_anchor` | 责任锚定 + SHA-256 审计凭证上链 |
 
 <p align="center">— ✦ —</p>
 
-## ✦ Quick Start
+## ✦ 仓库结构
 
-```bash
-git clone git@github.com:NOHN-AI/SPL-G1-General-purpose-processor.git
-cd SPL-G1-General-purpose-processor
-
-# Core EDA toolchain — pure Python ≥3.8, stdlib only
-make demo-causal
-
-# EDA → RTL pipeline: causal design → PDK map → Verilog config
-python eda_cli.py --desc examples/causal_chain_demo.json \
-  --pdk pdk/silicon_cim_v1.json --strategy min_delay \
-  --output outputs/netlist.json --rtl --rtl-dir outputs/rtlgen/
-
-# RTL simulation (Icarus Verilog 12.0+ required)
-# Add to PATH if needed: $env:PATH = "C:\iverilog\bin;$env:PATH"
-make sim          # compile + run: 7/7 tests PASS, 0 errors (Phase A v5)
-make wave         # open waveforms in GTKWave
-
-# Compile a C-subset program to SPL-G1 microcode and verify semantics
-make splcc-bridge                 # C → microcode bridge (verify mode)
-python splcc.py tests/loop_sub.c --verify
+```
+SPL-G1-general-purpose-processor/
+├── rtl/                     # 可综合 RTL（Verilog/SystemVerilog）
+│   ├── narrative_strip.v
+│   ├── assumption_lens.v
+│   ├── fragility_latch.v
+│   ├── causal_sync.v
+│   └── state_anchor.v
+├── sim/                     # 仿真激励与黄金向量
+├── sw/                      # 软件参考实现（Python）
+├── docs/                    # 流水线规范与接口定义
+├── constraints/             # 时序与物理约束
+└── LICENSE
 ```
 
 <p align="center">— ✦ —</p>
 
-## ✦ What's Inside
-
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
-
-- **Hardware causal-audit pipeline** — every compute step carries an observable P→Q causal trail; audit failure → SBC fuse blown → output permanently zeroed (Materica #4).
-- **Tri-mode PIM compute array** — 4×4 storage-in-memory grid (Cell v2: 64-bit local store + 32‑op ALU), with SCALAR / VECTOR / MATRIX execution modes, 8‑bit neighbour interconnect, per-col vec_sum, and full-array mat_total reduction.
-- **True FP16 (IEEE 754 half-precision)** — sign / 5-bit exponent / 10-bit mantissa, subnormal / NaN / ±Inf, `roundTiesToEven`. Real `FP16_ADD / SUB / MUL / CMP / MAC` semantics replace integer stubs (A2).
-- **Causal constraints (v2)** — `spl_cim_causal_unit` v2 performs hard-constraint checking: `constraint_pass = (constraint_bits == 64'hFFFF_FFFF_FFFF_FFFF)` plus a 56-bit `dep_mask` dependency check with cascade invalidation. Pass-through (bridge) mode has `constraint_bits` all-1s → always passes. *Note: the IMPROVEMENT_PLAN's programmable `audit_constraint_mask` (per-class FP16/VECTOR/MATRIX forbid + `constraint_bits_latch`) is not yet in the RTL — the constraint unit currently only distinguishes "all-allowed" vs "configured rule".* (A5)
-- **Sequencer v4** — parameterized 256‑entry program memory with JMP / JZ / JNZ / CALL / RET / HALT control‑flow instructions, 8‑deep return stack, OOB protection. The RA-BUS READ transaction (`SEQ_READ`) state is present (annotated v5) for the data channel (A4).
-- **RA-BUS arbiter v1** — 4‑target address‑decoded bus fabric (PIM / Audit / Identity / External) with READ / WRITE / EXECUTE / CONFIG transaction types.
-- **Identity anchor v1** — 256‑bit hardware identity verification, 64‑cycle nibble‑by‑nibble handshake.
-- **SBC fuse** — audit failure → `fuse_blown` latch → output data forced to zero; recovery only via hardware reset (A6).
-- **EDA toolchain (pure Python, stdlib‑only)** — `eda_cli.py` drives parse → map → build → export → RTL generation:
-  - `eda_parser.py` — reads causal‑design JSON
-  - `eda_mapper.py` — maps operators to PDK variants
-  - `eda_exporter.py` — emits netlist and reports
-  - `eda_rtlgen.py` — emits `spl_config_pkg.sv` + `tb_stimulus.sv` + `syn_tcl.tcl`
-  - `EDA_fixed.py` — Material Library + PAL routines
-- **splcc — C-subset compiler v0.1** — `splcc.py` turns a restricted C dialect (int vars, `for` / `while` / `if-else`, arithmetic, comparison) into SPL-G1 microcode CONFIG words, with an `--verify` interpreter mode (`splcc_bridge.py` wraps it for the test flow). C→microcode proven feasible; arrays/pointers/functions are v0.2+ (A3).
-- **RTL (SystemVerilog)** — `G1_Top_Integrated.sv` (full integrated top, v3), `ra_bus_arbiter.sv`, `spl_pim_compute_array.sv` (v2.1), `spl_pim_sequencer.sv` (v5), `spl_pim_cell.sv` (v2, FP16), `spl_cim_causal_unit.sv` (v2), `ext_mem_controller.sv`, `materica_compliance_unit.sv`, with integration testbench `tb_G1_Integrated.sv` (v3, 7 tests, 0 errors).
-- **PDK packs** — `silicon_cim_v1.json` (28nm CIM) and `optical_mzi_photonics_v1.json` (photonic).
-
-</div>
-
-## ✦ Make Targets
-
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
-
-| `make` target | What it runs |
-|---|---|
-| `make demo-causal` | Causal‑chain demo on the silicon CIM PDK |
-| `make demo-audit` | Cognitive‑audit demo (low‑power optimization) |
-| `make demo-optical` | Photonic PDK demo |
-| `make demo-full` | Full pipeline (COMPUTE operator + `params` consumption) |
-| `make demo-hetero` | Heterogeneous single-die mixed-material demo |
-| `make build DESC=<json>` | Compile a custom causal design |
-| `make sim` / `make wave` | RTL simulation + open waveform |
-| `make rtlgen` / `make rtlgen-apply` | EDA → RTL package generation (apply patches to RTL) |
-| `make pdk-report` / `make multi-pdk` | Material coverage matrix / multi-PDK batch compare |
-| `make splcc-bridge` | Run `splcc_bridge.py tests/loop_sub.c --verify --emit outputs` |
-| `make clean` | Remove build artifacts and `outputs/*.json` |
-
-> RTL simulation needs **Icarus Verilog** (`iverilog` / `vvp`) and optionally **GTKWave** for `.vcd` waveforms. Install: `winget install icarusVerilog` or download from [bleyer.org/icarus](https://bleyer.org/icarus/).
-
-</div>
-
-## ✦ Usage
-
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
+## ✦ 软件参考实现
 
 ```bash
-# Run the gold-path causal demo end-to-end
-python eda_cli.py \
-  --desc examples/causal_chain_demo.json \
-  --pdk pdk/silicon_cim_v1.json \
-  --strategy min_delay \
-  --output outputs/netlist.json
+cd sw
+pip install -r requirements.txt
+python run_pipeline.py --input decision.json   # 输出哈希链式审计轨迹
 ```
 
-Strategy options: `min_delay` · `min_power`. Example designs live in `examples/` (`causal_chain_demo.json`, `cognitive_audit_demo.json`, `full_pipeline_demo.json`).
+<p align="center">— ✦ —</p>
+
+## ✦ 仿真
 
 ```bash
-# Compile a C-subset program to microcode and verify its semantics
-python splcc.py tests/loop_sub.c --verify
-#  → prints interpretation of each variable after execution
-
-python splcc.py tests/loop_sub.c --json
-#  → emits CONFIG addr/wdata pairs as JSON
+cd sim
+# 使用 Icarus Verilog / Verilator
+make sim        # 跑通全部黄金向量
 ```
 
-</div>
+<p align="center">— ✦ —</p>
 
-## ✦ Application Paths: Security Audit Node
+## ✦ 确定性保证
 
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
+- 所有中间表示采用规范化的字节序与定长字段。
+- 哈希链使用 SHA-256，每个审计事件携带前一事件的根哈希。
+- 软件与硬件共享同一组黄金向量，偏差即视为实现缺陷。
 
-- **Industrial safety (audit ledger)** — each process step → P→Q causal record → audit against safety spec → violation/skip → `fuse_blown` → emergency stop + tamper-proof violation log.
-- **Compliance computing** — cloud trust question "did the server tamper with the AI inference result?" → TCU side-band audit: every inference step's P→Q label is publicly verifiable.
-- **Supply-chain traceability** — "where did this batch come from?" → `State_Anchor` + full-chain P→Q tracking = forgery cannot be covered.
+<p align="center">— ✦ —</p>
 
-</div>
+## ✦ 使用场景
 
-## ✦ Scale Ladder & Milestones
+- **高可信决策硬件**：金融、能源、军工等不容许"黑箱"的领域。
+- **合规取证**：将因果审计轨迹直接固化进可信执行环境。
+- **边缘审计**：在断网设备上本地完成可验证审计。
 
-<div style="max-width:880px;margin:0 auto;padding:0 16px">
+<p align="center">— ✦ —</p>
 
-**Scale ladder**
+## ✦ 许可与授权
 
-| Level | Scale | Working set | Runs what | Milestone |
-|-------|-------|-------------|-----------|-----------|
-| L0 prototype | 4×4 = 16 cells | 128 B | demo-grade integer/FP16 ops | ✅ current |
-| L1 embedded core | 16×16 = 256 cells | 4 KB | real MCU-class program (needs A3 compiler) | Phase B |
-| L2 AI accelerator | 64×64 = 4096 cells | 64 KB | tiny MLP, sensor-end classification | Phase C |
-| L3 storage-class | 262,144 cells | 2 MB | industrial audit rulebase + batch trace | needs tape-out |
+本仓库**非开源**。采用双轨模式：个人非商业研究免费；政府 / 企业需事先取得书面商业授权。详见 [LICENSE](./LICENSE)。
 
-**Milestones**
-
-| Milestone | Definition | Verification |
-|-----------|------------|--------------|
-| M1: TCU trust closure | A2+A3+A4+A5 complete | sim runs audit loop, fuse closes |
-| M2: first compiler | splcc emits runnable microcode | `for` loop sim passes |
-| M3: Tile expansion | 16×16 array | all modes tested |
-| M4: Synthesis result | Yosys area/freq/power | tape-out feasibility |
-
-> Known gaps (post Phase A): C5 scale too small (128 B work set); C6 no timing/area/power synthesis yet (Yosys/DC not run).
-
-</div>
-
-## ✦ Project Structure
-
-```
-SPL-G1-General-purpose-processor/
-├── eda_cli.py / eda_parser.py / eda_mapper.py / eda_exporter.py /
-│   eda_rtlgen.py / EDA_fixed.py / eda_dataflow.py / eda_pdk_report.py
-│                                   # EDA toolchain (pure Python)
-├── splcc.py / splcc_bridge.py      # C-subset → SPL-G1 microcode compiler (v0.1)
-├── Makefile                        # demo / build / sim / splcc targets
-├── rtl/
-│   ├── G1_Top_Integrated.sv        # Full integrated top v3 (RA-BUS + PIM + Audit + Anchor + Fuse)
-│   ├── ra_bus_arbiter.sv           # RA-BUS 4-target arbiter + address decoder
-│   ├── spl_pim_cell.sv             # PIM Cell v2: 64-bit store + 32-op ALU + neighbour + FP16
-│   ├── spl_pim_compute_array.sv    # PIM Array v2.1: 4×4, tri-mode, pim_flag output
-│   ├── spl_pim_sequencer.sv        # Sequencer v4: 256-entry prog mem + control-flow (+ v5 READ state)
-│   ├── spl_cim_causal_unit.sv      # Causal Audit Unit v2: constraint check + cascade
-│   ├── ext_mem_controller.sv       # External memory controller (AXI4, RA-BUS target 3)
-│   ├── materica_compliance_unit.sv # Materica 4-gate hardware compliance checker
-│   ├── tb_G1_Integrated.sv         # Integration testbench v3 (7 tests, 0 errors)
-│   └── tb_pim_compute_array.sv     # PIM array standalone testbench
-├── pdk/                            # silicon_cim_v1.json, optical_mzi_photonics_v1.json
-├── examples/                       # causal / cognitive-audit / full-pipeline / heterogeneous demos
-├── tests/                          # loop_sub.c (splcc test source)
-├── outputs/                        # generated netlists / VCD waveforms / RTL artifacts
-├── docs/                           # ra_bus_protocol.md, BASELINE.md, EDA_ITERATION_DONE.md, history/
-├── SPL-Core.json                   # ISA definition (v0.3: 16 instructions + control-flow)
-├── State_Anchor.pdl                # 256-bit hardware identity anchor protocol
-├── Materica-specification          # 4-requirement material causality mapping spec
-├── IMPROVEMENT_PLAN.md             # Current roadmap (v5.0, TCU positioning, Phase A done)
-└── README.md
-```
-
-## ✦ License & Authorization
-
-This repository is **not open-source**. It uses a dual-track model: free for individual non-commercial research, paid commercial authorization required for government / enterprise. See [LICENSE](./LICENSE). Patent-pending (PCT).
+**授权咨询**：
+- 国际 / 全球：ai@nohnlins.com
+- 中国：lin@secondai.top
 
 <p align="center">
   <a href="https://github.com/NOHN-AI">NOHN-AI</a>
@@ -239,4 +100,4 @@ This repository is **not open-source**. It uses a dual-track model: free for ind
   &nbsp;·&nbsp;
   <a href="mailto:ai@nohnlins.com">ai@nohnlins.com</a>
 </p>
-<p align="center"><sub>NOHN AI · SPL-G1 · Trusted Compute Unit</sub></p>
+<p align="center"><sub>NOHN AI · SPL-G1</sub></p>
