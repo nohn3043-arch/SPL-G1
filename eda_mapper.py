@@ -197,19 +197,34 @@ def map_causal_ir(
         MappingResult 包含每个算子的变体选择及汇总
     """
     # ── 芯片逻辑能力适配门禁 (v1.0.0) ──
+    # 第二视角原则：适配层信息缺失 = 因果链断裂，应中断而非降级放行。
     chip_failed: List[str] = []
     chip_notes: List[str] = []
     chip_compatible = True
     if pdk_data is not None:
         try:
             adapter = ChipAdapter()
-            adapt_res = adapter.adapt(material, pdk_data)
-            chip_compatible = adapt_res.compatible
-            chip_failed = list(adapt_res.failed)
-            chip_notes = list(adapt_res.notes)
-        except Exception as e:  # 适配层异常不应阻塞既有流程，仅记录
-            chip_compatible = True
-            chip_failed = [f"芯片适配层异常: {e}"]
+            # 修复(断裂点3)：收集所有生效材料（全局 + op.material 覆盖），
+            # 对每个生效材料单独过适配门禁，任一不兼容 → 整体拒绝，
+            # 防止混装设计绕过适配校验。
+            op_material_set = {
+                op.material for op in ir.ops if getattr(op, "material", None)
+            }
+            effective_materials = sorted(op_material_set | {material})
+            for eff_mat in effective_materials:
+                adapt_res = adapter.adapt(eff_mat, pdk_data)
+                if not adapt_res.compatible:
+                    chip_compatible = False
+                    chip_failed.extend(
+                        f"[{eff_mat}] {f}" for f in adapt_res.failed
+                    )
+                chip_notes.extend(
+                    f"[{eff_mat}] {n}" for n in adapt_res.notes
+                )
+        except Exception as e:
+            # 修复：适配层异常 → 明确拒绝（[中断]），不再静默放行。
+            chip_compatible = False
+            chip_failed = [f"芯片适配层异常(门禁未完成，拒绝映射): {e}"]
 
     op_mappings: List[OpMapping] = []
     total_delay = 0.0

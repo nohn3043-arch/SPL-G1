@@ -223,16 +223,40 @@ class ChipAdapter:
             notes.append("审计-级联失效: 材料未声明级联失效 (允许，按材料能力)")
         return notes
 
+    def _check_cell_coverage(self, pdk: Dict[str, Any]) -> List[str]:
+        """算子覆盖率校验：PDK 的 cells 必须覆盖芯片核心因果算子。
+
+        对齐 eda_mapper 的真实输入源（pdk_data["cells"]），
+        修复「适配层看 materica 声明、EDA 用 cells 算子」的基准断裂：
+        即使 M1-M4 全过，若 cells 缺核心算子，该材料也无法承载设计。
+        """
+        cells = pdk.get("cells", {})
+        if not isinstance(cells, dict):
+            return ["算子覆盖率: PDK 缺少 cells 算子库（无法承载因果计算）"]
+        present = {str(k).upper() for k in cells.keys()}
+        missing = [op for op in self.REQUIRED_OPS if op not in present]
+        if missing:
+            return [
+                f"算子覆盖率: cells 缺少核心算子 {', '.join(sorted(missing))}"
+            ]
+        return []
+
+    # 芯片承载因果审计所需的 PIM 算子全集（对齐 EDA_fixed.OP_MAPPING 合法算子集）。
+    # 注意：ANCHOR(0x01) 由 State_Anchor.pdl 独立硬件模块承载（RA-BUS Identity 目标），
+    # 不属于 PIM cells 算子库，因此不列入 REQUIRED_OPS。
+    REQUIRED_OPS: tuple = ("NS", "IAP", "LCH", "CCS", "STATE", "COMPUTE")
+
     def adapt(self, material: str, pdk: Dict[str, Any]) -> AdaptationResult:
         """对单个材料的 PDK 做芯片逻辑能力适配。
 
         材料无关适配策略:
-          - 跨材料硬门禁 = Materica M1-M4（逻辑/安全前提，所有承载 SPL-G1 逻辑的材料必须满足）
+          - 跨材料硬门禁 = Materica M1-M4（逻辑/安全前提）+ cells 算子覆盖率
           - 计算/审计规格 = 软检查（材料自定档位，仅记录差异，不否决）
         """
         cap = MaterialCapability.from_pdk(pdk)
-        # 硬门禁：仅 M1-M4
+        # 硬门禁：M1-M4 + 算子覆盖率（与 eda_mapper 的 cells 输入源对齐）
         fails = self._check_materica(cap)
+        fails += self._check_cell_coverage(pdk)
         # 软检查：计算/审计规格（记录差异，不否决）
         notes = []
         notes += self._check_compute(cap)
@@ -250,6 +274,7 @@ class ChipAdapter:
                 "M2 因果定向路由",
                 "M3 存算一体近接性",
                 "M4 安全边界不可逆性",
+                "算子覆盖率",
             ],
             notes=notes,
         )
