@@ -26,17 +26,25 @@ from eda_mapper import MappingResult, OpMapping
 
 # ── Causal op → PIM micro-op encoding (Stage 1/2: real dataflow) ──
 # These map the 6 causal op classes to PIM micro-ops understood by
-# spl_pim_cell / spl_pim_sequencer. Semantics are PLACEHOLDER until
-# Phase A5 NOMOS constraint rules define exact per-op encodings — the
-# key improvement is that stimulus now drives the REAL array/sequencer
-# with a per-op micro-op + cell assignment, instead of all-MUL @ cell(0,0).
+# spl_pim_cell / spl_pim_sequencer.
+#
+# v0.2.0: formal backend semantics (eda_backend.py). CAUSAL_OP_TO_MICRO is
+# kept as the PRIMARY (lead) opcode of each op's micro-op SEQUENCE — the
+# full per-op sequence + audit record generation now lives in eda_backend,
+# and the generated spl_config_pkg carries both (see _generate_config_pkg).
+from eda_backend import (
+    OP_SEQUENCES, RULE_ID_MAP, CausalRecord,
+    build_causal_record, build_design_provenance,
+    get_op_sequence, opcode_list_to_names, opcode_list_to_hex,
+)
+
 CAUSAL_OP_TO_MICRO = {
-    "NS":      0x01,   # ADD     — narrative strip as scalar filter (placeholder)
-    "IAP":     0x08,   # CMP_EQ  — assumption detect as compare (placeholder)
-    "LCH":     0x0B,   # CMP_GT  — fragility hedge as threshold (placeholder)
-    "CCS":     0x00,   # NOP     — clock sync as barrier (placeholder)
-    "STATE":   0x1B,   # STORE   — state update as store (placeholder)
-    "COMPUTE": 0x05,   # MUL     — compute as multiply (placeholder)
+    "NS":      OP_SEQUENCES["NS"]["seq"][0][0],
+    "IAP":     OP_SEQUENCES["IAP"]["seq"][0][0],
+    "LCH":     OP_SEQUENCES["LCH"]["seq"][0][0],
+    "CCS":     OP_SEQUENCES["CCS"]["seq"][0][0],
+    "STATE":   OP_SEQUENCES["STATE"]["seq"][0][0],
+    "COMPUTE": OP_SEQUENCES["COMPUTE"]["seq"][0][0],
 }
 
 # ── RA-BUS cell addressing (from spl_pim_compute_array.sv) ──
@@ -46,7 +54,8 @@ CAUSAL_OP_TO_MICRO = {
 
 def _generate_config_pkg(result: MappingResult,
                          array_rows: int = 64,
-                         array_cols: int = 64) -> str:
+                         array_cols: int = 64,
+                         ir: object = None) -> str:
     """Generate spl_config_pkg.sv from mapping results.
 
     This package is the EDA→RTL configuration hook (Stage 1):
@@ -123,6 +132,62 @@ def _generate_config_pkg(result: MappingResult,
             lines.extend([
                 f"    //  [{op.op_index}] {op.op_type} — UNMAPPED: {op.failed_reason}",
             ])
+        lines.append("")
+
+    # ════════════════════════════════════════════════════════════
+    # Backend semantics block (v0.2.0) — micro-op sequences + audit records
+    # ════════════════════════════════════════════════════════════
+    # Derived from eda_backend.py; per-op microcode sequences match the
+    # real spl_pim_cell.v2 opcode table, and each causal record matches
+    # the spl_cim_causal_unit.v2 wr_data_p/wr_data_q wire format.
+    lines.append("    // ════════════════════════════════════════════════════════════")
+    lines.append("    // ── Backend semantics (v0.2.0): micro-op sequences + audit records ──")
+    lines.append("    // ════════════════════════════════════════════════════════════")
+
+    # Producer map: signal → op_index (for dependency mask construction)
+    producer_of: dict = {}
+    if ir is not None and hasattr(ir, 'ops'):
+        for _i, _op in enumerate(ir.ops):
+            for _out in _op.outputs:
+                producer_of[_out] = _i
+
+    design_hash = build_design_provenance(result.design_name)
+
+    for op in result.ops:
+        safe = f"OP{op.op_index}"
+        op_key = str(op.op_type).upper()
+        # 1) micro-op sequence (lead opcode + full sequence)
+        seq_desc, seq_opcodes = get_op_sequence(op_key)
+        lead = seq_opcodes[0] if seq_opcodes else 0x00
+        seq_hex = opcode_list_to_hex(seq_opcodes)
+        seq_names = opcode_list_to_names(seq_opcodes)
+        lines.extend([
+            f"    //  [{op.op_index}] {op_key} backend sequence ({seq_desc})",
+            f"    localparam logic [4:0] {safe}_MICRO_OP   = 5'h{lead:02X};  // lead opcode",
+            f"    localparam string {safe}_MICRO_SEQ  = \"{seq_names}\";",
+            f"    localparam string {safe}_MICRO_HEX  = \"{seq_hex}\";",
+        ])
+        # 2) audit record (Causal Record → spl_cim_causal_unit v2)
+        #    producer indices from the IR dataflow
+        prod_idx: List[int] = []
+        if ir is not None and hasattr(ir, 'ops'):
+            op_i = op.op_index
+            if 0 <= op_i < len(ir.ops):
+                for _inp in ir.ops[op_i].inputs:
+                    if _inp in producer_of:
+                        prod_idx.append(producer_of[_inp])
+        rec = build_causal_record(
+            op_key, op.op_index, prod_idx,
+            design_hash=design_hash,
+        )
+        rec_p = rec.pack_p()
+        rec_q = rec.pack_q()
+        lines.extend([
+            f"    //  audit record: rule={rec.rule_id:#04x} dep_mask={rec.dep_mask:014x} "
+            f"weight_q16_16={rec.weight_q16_16:#x}",
+            f"    localparam logic [255:0] {safe}_AUDIT_P = 256'h{rec_p:064x};",
+            f"    localparam logic [255:0] {safe}_AUDIT_Q = 256'h{rec_q:064x};",
+        ])
         lines.append("")
 
     lines.extend([
@@ -467,7 +532,7 @@ def generate_rtl_artifacts(
     # 1. Config package
     pkg_path = os.path.join(output_dir, "spl_config_pkg.sv")
     with open(pkg_path, 'w', encoding='utf-8') as f:
-        f.write(_generate_config_pkg(result, array_rows, array_cols))
+        f.write(_generate_config_pkg(result, array_rows, array_cols, ir))
     artifacts["config_pkg"] = os.path.abspath(pkg_path)
 
     # 2. Stimulus testbench
