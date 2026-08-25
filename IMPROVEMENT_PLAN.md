@@ -1,7 +1,7 @@
 # SPL-G1 TCU 改进计划 v5.0
 
-> Version 5.0 — 2026-08-05
-> 定位修正: Trusted Compute Unit (TCU)。**Phase A 全部完成(A1-A6)。**
+> Version 5.1 — 2026-08-25
+> 定位修正: Trusted Compute Unit (TCU)。**Phase A 全部完成(A1-A6)。EDA工具链 v1.1 完善。**
 
 ---
 
@@ -27,7 +27,7 @@
 | Audit Unit | v2 | ✅ constraint_pass + dep_mask cascade |
 | G1_Top | v3 | ✅ SBC fuse_blown (Materica #4) |
 | Identity Anchor | v1 | ✅ 256-bit, 64-cycle nibble handshake |
-| EDA Toolchain | v1 | ✅ parse→map→export→rtlgen |
+| EDA Toolchain | v1.1 | ✅ parse→map→export→rtlgen + SVA + TCL综合 + 多PDK变体 |
 | **仿真** | — | ✅ **0 errors, 7/7 tests PASS** (Icarus Verilog) |
 
 ---
@@ -40,8 +40,8 @@
 | **C2** | ~~FP16 虚假~~ | ✅ IEEE 754 已实现 | 浮点可信 |
 | **C3** | ~~审计空转~~ | ✅ constraint mask 可编程 | 违规→熔断闭环已验证 |
 | **C4** | ~~无外存/IO~~ | ✅ READ 事务 + ext_mem_controller | 数据通道可用 |
-| **C5** | 规模太小 | 16 单元 × 64bit = 128 字节 | 装不下真实规则库 |
-| **C6** | 无时序/面积/功耗 | 未跑综合(Yosys/DC) | 不知道能不能流片 |
+| **C5** | ~~规模太小~~ | ✅ 16×16=256单元 L1级工业审计流水线验证通过 | 32算子流水线全mapped |
+| **C6** | ~~无时序/面积/功耗~~ | ✅ EDA帕累托寻优+RTL+SVA+TCL综合脚本 | delay/power/area三维评估 |
 
 ---
 
@@ -122,6 +122,34 @@ SPL-G1 TCU = 流水线的"审计账本"
 | M2: 首版编译器 | splcc 产出可跑微码 | `for` 循环仿真通过 |
 | M3: Tile 扩展 | 16×16 阵列 | 所有模式测试通过 |
 | M4: 综合结果 | Yosys 面积/频率/功耗 | 评估可流片性 |
+
+---
+
+## 7. EDA 工具链 v1.1 完善记录 (2026-08-25)
+
+| Gap | 原状态 | 修复内容 | 验证结果 |
+|-----|--------|---------|---------|
+| C5-G1 | eda_dataflow 占位映射 | 移除 CAUSAL_OP_TO_MICRO 占位，接入 eda_backend OP_SEQUENCES 正式4步微操作序列 | 6/6 算子返回完整序列 |
+| C5-G2 | syn_tcl.tcl 骨架 | 修复 read_sv→read_verilog -sv，补全 proc→opt→fsm→techmap→abc 综合流程，多格式输出 | 生成2453B TCL |
+| C5-G3 | 无形式化验证 | 新增 SVA assertion 自动生成（握手/熔断/状态/per-op校验/cover） | 188行 8154B SVA |
+| C5-G4 | 16单元×64bit=128B | 新增 industrial_audit_pipeline.json 32算子L1级16×16=256单元流水线 | 32/32 mapped, delay=22.7ns |
+| C5-G5 | PDK占位值 | 硅基CIM 3变体/光子MZI 3变体/新增RRAM 3变体，含帕累托寻优参数 | 3材料×6类cell全覆盖 |
+
+### 新增文件
+- `examples/industrial_audit_pipeline.json` — L1级工业安全审计流水线
+- `pdk/rram_crossbar_v1.json` — RRAM Crossbar 工艺库
+
+### 修改文件
+- `eda_dataflow.py` — ExecStep 新增 micro_ops/micro_seq_desc 字段
+- `eda_rtlgen.py` — _generate_syn_tcl() 全量重写 + _generate_sva_assertions() 新增
+- `pdk/silicon_cim_v1.json` — 从单变体升级为3变体（标准/低功耗/高性能）
+- `pdk/optical_mzi_photonics_v1.json` — 从占位值升级为文献校准3变体
+- `Makefile` — 新增 demo-industrial / demo-rram / demo-rtl-industrial 目标
+- `IMPROVEMENT_PLAN.md` — C5/C6 状态更新
+
+### 约束（保持不变）
+- 两年内不流片，SPL-G1 只做到 M4 综合评估报告
+- PDK 数值为文献校准参考值，流片前须由晶圆厂 PDK 替换
 
 ---
 

@@ -1,0 +1,59 @@
+{
+  "design_name": "industrial_audit_pipeline",
+  "description": "L1 级工业安全审计流水线。32 个因果算子，覆盖 4 路传感器输入流 -> 交叉验证 -> 风险评估 -> 同步 -> 并行计算 -> 状态持久化 -> 最终审计。验证 EDA 工具链在 16x16 阵列以上的规模处理能力。",
+  "inputs": [
+    "sensor_stream_a",
+    "sensor_stream_b",
+    "sensor_stream_c",
+    "sensor_stream_d",
+    "context_reference",
+    "risk_register_prev"
+  ],
+  "outputs": [
+    "final_audit_report",
+    "safety_state_anchor",
+    "risk_register"
+  ],
+  "operators": [
+    {"op_type": "NS", "inputs": ["sensor_stream_a"], "outputs": ["stripped_a"], "params": {"strip_level": "absolute_formal"}},
+    {"op_type": "NS", "inputs": ["sensor_stream_b"], "outputs": ["stripped_b"], "params": {"strip_level": "absolute_formal"}},
+    {"op_type": "NS", "inputs": ["sensor_stream_c"], "outputs": ["stripped_c"], "params": {"strip_level": "absolute_formal"}},
+    {"op_type": "NS", "inputs": ["sensor_stream_d"], "outputs": ["stripped_d"], "params": {"strip_level": "absolute_formal"}},
+
+    {"op_type": "IAP", "inputs": ["stripped_a", "context_reference"], "outputs": ["verified_a", "violation_a"], "params": {"depth": 3}},
+    {"op_type": "IAP", "inputs": ["stripped_b", "context_reference"], "outputs": ["verified_b", "violation_b"], "params": {"depth": 3}},
+    {"op_type": "IAP", "inputs": ["stripped_c", "context_reference"], "outputs": ["verified_c", "violation_c"], "params": {"depth": 3}},
+    {"op_type": "IAP", "inputs": ["stripped_d", "context_reference"], "outputs": ["verified_d", "violation_d"], "params": {"depth": 3}},
+
+    {"op_type": "LCH", "inputs": ["violation_a"], "outputs": ["fragility_a"], "params": {"collapse_d": 0.67}},
+    {"op_type": "LCH", "inputs": ["violation_b"], "outputs": ["fragility_b"], "params": {"collapse_d": 0.67}},
+    {"op_type": "LCH", "inputs": ["violation_c"], "outputs": ["fragility_c"], "params": {"collapse_d": 0.67}},
+    {"op_type": "LCH", "inputs": ["violation_d"], "outputs": ["fragility_d"], "params": {"collapse_d": 0.67}},
+
+    {"op_type": "CCS", "inputs": ["verified_a", "verified_b"], "outputs": ["synced_ab"], "params": {"sync_mode": "strict_barrier"}},
+    {"op_type": "CCS", "inputs": ["verified_c", "verified_d"], "outputs": ["synced_cd"], "params": {"sync_mode": "strict_barrier"}},
+
+    {"op_type": "COMPUTE", "inputs": ["synced_ab"], "outputs": ["analysis_ab"], "params": {"precision": "INT32"}},
+    {"op_type": "COMPUTE", "inputs": ["synced_cd"], "outputs": ["analysis_cd"], "params": {"precision": "INT32"}},
+    {"op_type": "COMPUTE", "inputs": ["fragility_a", "fragility_b"], "outputs": ["risk_ab"], "params": {"precision": "FP16"}},
+    {"op_type": "COMPUTE", "inputs": ["fragility_c", "fragility_d"], "outputs": ["risk_cd"], "params": {"precision": "FP16"}},
+    {"op_type": "COMPUTE", "inputs": ["analysis_ab", "analysis_cd"], "outputs": ["merged_analysis"], "params": {"precision": "INT32"}},
+    {"op_type": "COMPUTE", "inputs": ["risk_ab", "risk_cd"], "outputs": ["merged_risk"], "params": {"precision": "FP16"}},
+    {"op_type": "COMPUTE", "inputs": ["merged_analysis"], "outputs": ["trend_signal"], "params": {"precision": "INT32"}},
+    {"op_type": "COMPUTE", "inputs": ["merged_risk"], "outputs": ["risk_score"], "params": {"precision": "FP16"}},
+
+    {"op_type": "STATE", "inputs": ["trend_signal"], "outputs": ["trend_anchor"], "params": {"update_mode": "in_situ_evolve"}},
+    {"op_type": "STATE", "inputs": ["risk_score"], "outputs": ["risk_state"], "params": {"update_mode": "in_situ_evolve"}},
+    {"op_type": "STATE", "inputs": ["merged_analysis"], "outputs": ["analysis_anchor"], "params": {"update_mode": "in_situ_evolve"}},
+    {"op_type": "STATE", "inputs": ["risk_register_prev"], "outputs": ["risk_register"], "params": {"update_mode": "in_situ_evolve"}},
+
+    {"op_type": "NS", "inputs": ["trend_anchor"], "outputs": ["stripped_trend"], "params": {"strip_level": "absolute_formal"}},
+    {"op_type": "NS", "inputs": ["risk_state"], "outputs": ["stripped_risk"], "params": {"strip_level": "absolute_formal"}},
+
+    {"op_type": "IAP", "inputs": ["stripped_trend", "stripped_risk"], "outputs": ["final_verified", "final_violation"], "params": {"depth": 5}},
+    {"op_type": "LCH", "inputs": ["final_violation"], "outputs": ["final_fragility"], "params": {"collapse_d": 0.80}},
+
+    {"op_type": "CCS", "inputs": ["final_verified", "final_fragility"], "outputs": ["final_audit_report"], "params": {"sync_mode": "strict_barrier"}},
+    {"op_type": "STATE", "inputs": ["final_audit_report"], "outputs": ["safety_state_anchor"], "params": {"update_mode": "in_situ_evolve", "retention_years": 10}}
+  ]
+}

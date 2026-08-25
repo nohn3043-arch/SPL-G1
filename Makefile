@@ -18,6 +18,9 @@ help:
 	@echo "  make demo-audit        # 运行认知审计用例(低功耗优化)"
 	@echo "  make demo-optical      # 运行光子工艺演示用例"
 	@echo "  make demo-full         # 运行完整流水线(含COMPUTE算子 + params消费)"
+	@echo "  make demo-industrial   # 运行工业安全审计流水线(32算子 L1级 16x16阵列)"
+	@echo "  make demo-rram         # 运行RRAM阻变存储器工艺演示"
+	@echo "  make demo-rtl-industrial # 工业流水线+RTL+SVA全工件生成"
 	@echo "  make build DESC=<json> # 编译指定因果设计"
 	@echo "  make sim               # 运行RTL仿真并生成波形"
 	@echo "  make wave              # 打开波形查看器"
@@ -56,6 +59,33 @@ demo-full:
 		--pdk pdk/silicon_cim_v1.json \
 		--strategy min_power \
 		--output outputs/netlist_full_pipeline.json
+
+# 运行工业安全审计流水线 (32算子 L1级 16x16阵列)
+.PHONY: demo-industrial
+demo-industrial:
+	$(PYTHON) eda_cli.py --desc examples/industrial_audit_pipeline.json \
+		--pdk pdk/silicon_cim_v1.json \
+		--strategy min_delay \
+		--rows 16 --cols 16 \
+		--output outputs/netlist_industrial.json
+
+# 运行 RRAM 阻变存储器工艺演示
+.PHONY: demo-rram
+demo-rram:
+	$(PYTHON) eda_cli.py --desc examples/full_pipeline_demo.json \
+		--pdk pdk/rram_crossbar_v1.json \
+		--strategy min_power \
+		--output outputs/netlist_rram.json
+
+# 工业流水线 + RTL + SVA 全工件生成
+.PHONY: demo-rtl-industrial
+demo-rtl-industrial:
+	$(PYTHON) eda_cli.py --desc examples/industrial_audit_pipeline.json \
+		--pdk pdk/silicon_cim_v1.json \
+		--strategy min_delay \
+		--rows 16 --cols 16 \
+		--rtl \
+		--output outputs/netlist_industrial_rtl.json
 
 # 编译自定义设计
 # 用法: make build DESC=<desc.json> [PDK=<pdk.json>] [STRATEGY=<strategy>] [OUTPUT=<output.json>]

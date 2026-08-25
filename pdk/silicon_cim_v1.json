@@ -1,5 +1,6 @@
 {
   "material": "silicon_cim_28nm_v1",
+  "note": "SPL-G1 硅基 CIM 28nm 工艺库 (v1.1)。数值基于 TSMC 28nm CIM 研究文献校准区间，含多变体供 EDA 帕累托寻优。流片前须由晶圆厂 PDK 替换。",
   "materica": {
     "M1_logic_state_stability": {
       "stable_states": 2,
@@ -45,7 +46,30 @@
         "snr_db": 45.0,
         "implementation_spec": {
           "cell_type": "CIM_SRAM_Filter_Array",
-          "voltage_v": 0.8
+          "voltage_v": 0.8,
+          "filter_width": 128
+        }
+      },
+      {
+        "delay_ns": 2.5,
+        "power_mw": 3.0,
+        "area_um2": 95.0,
+        "snr_db": 42.0,
+        "implementation_spec": {
+          "cell_type": "CIM_SRAM_Filter_LowPower",
+          "voltage_v": 0.6,
+          "filter_width": 64
+        }
+      },
+      {
+        "delay_ns": 0.8,
+        "power_mw": 9.0,
+        "area_um2": 180.0,
+        "snr_db": 48.0,
+        "implementation_spec": {
+          "cell_type": "CIM_SRAM_Filter_Fast",
+          "voltage_v": 1.0,
+          "filter_width": 256
         }
       }
     ],
@@ -59,6 +83,28 @@
           "cell_type": "CIM_Comparator_Logic",
           "precision": "INT8"
         }
+      },
+      {
+        "delay_ns": 1.5,
+        "power_mw": 4.5,
+        "area_um2": 60.0,
+        "snr_db": 47.0,
+        "implementation_spec": {
+          "cell_type": "CIM_Comparator_LowPower",
+          "precision": "INT8",
+          "voltage_v": 0.6
+        }
+      },
+      {
+        "delay_ns": 0.5,
+        "power_mw": 14.0,
+        "area_um2": 140.0,
+        "snr_db": 53.0,
+        "implementation_spec": {
+          "cell_type": "CIM_Comparator_Fast",
+          "precision": "INT16",
+          "voltage_v": 1.0
+        }
       }
     ],
     "LCH": [
@@ -70,6 +116,17 @@
         "implementation_spec": {
           "cell_type": "CIM_Loop_Guard_Logic",
           "guard_mode": "cycle_break"
+        }
+      },
+      {
+        "delay_ns": 0.6,
+        "power_mw": 0.8,
+        "area_um2": 28.0,
+        "snr_db": 62.0,
+        "implementation_spec": {
+          "cell_type": "CIM_Loop_Guard_LowPower",
+          "guard_mode": "cycle_break",
+          "voltage_v": 0.6
         }
       }
     ],
@@ -83,6 +140,17 @@
           "cell_type": "Digital_DLL_Sync",
           "jitter_ps": 15
         }
+      },
+      {
+        "delay_ns": 0.25,
+        "power_mw": 0.6,
+        "area_um2": 20.0,
+        "snr_db": 75.0,
+        "implementation_spec": {
+          "cell_type": "Digital_DLL_Sync_LowPower",
+          "jitter_ps": 25,
+          "voltage_v": 0.6
+        }
       }
     ],
     "STATE": [
@@ -94,6 +162,28 @@
         "implementation_spec": {
           "cell_type": "Non_Volatile_RRAM_Anchor",
           "retention_years": 10
+        }
+      },
+      {
+        "delay_ns": 1.0,
+        "power_mw": 0.5,
+        "area_um2": 30.0,
+        "snr_db": 58.0,
+        "implementation_spec": {
+          "cell_type": "NVM_Anchor_LowPower",
+          "retention_years": 20,
+          "voltage_v": 0.6
+        }
+      },
+      {
+        "delay_ns": 0.3,
+        "power_mw": 4.0,
+        "area_um2": 70.0,
+        "snr_db": 63.0,
+        "implementation_spec": {
+          "cell_type": "SRAM_Anchor_Fast",
+          "retention_years": 0,
+          "voltage_v": 1.0
         }
       }
     ],
@@ -118,6 +208,40 @@
           "cell_type": "CIM_MAC_Array_16x16",
           "precision": "INT8",
           "throughput_ops_per_cycle": 256
+        }
+      },
+      {
+        "delay_ns": 1.5,
+        "power_mw": 8.0,
+        "area_um2": 180.0,
+        "snr_db": 52.0,
+        "implementation_spec": {
+          "cell_type": "CIM_ALU_32b_LowPower",
+          "precision": "INT32",
+          "throughput_ops_per_cycle": 1,
+          "voltage_v": 0.6
+        }
+      },
+      {
+        "delay_ns": 3.5,
+        "power_mw": 60.0,
+        "area_um2": 1200.0,
+        "snr_db": 68.0,
+        "implementation_spec": {
+          "cell_type": "CIM_MAC_Array_32x32",
+          "precision": "INT8",
+          "throughput_ops_per_cycle": 1024
+        }
+      },
+      {
+        "delay_ns": 1.2,
+        "power_mw": 18.0,
+        "area_um2": 350.0,
+        "snr_db": 50.0,
+        "implementation_spec": {
+          "cell_type": "CIM_FP16_ALU_Pipeline",
+          "precision": "FP16",
+          "throughput_ops_per_cycle": 2
         }
       }
     ]

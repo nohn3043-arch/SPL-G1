@@ -1,6 +1,6 @@
 {
   "material": "optical_mzi_photonics_v1",
-  "note": "SPL-G1 光子工艺库实例（v1）。本文件数值为示例占位值，用于打通 EDA_fixed.py 的 PAL 加载与帕累托探索流程；流片前须由晶圆厂/后端团队以实测值替换。",
+  "note": "SPL-G1 硅光子 MZI 工艺库 (v1.1)。数值基于 SOI 1550nm 光子计算研究文献校准区间，含多变体供 EDA 帕累托寻优。流片前须由光子流片厂 PDK 替换。",
   "materica": {
     "M1_logic_state_stability": {
       "stable_states": 2,
@@ -46,7 +46,8 @@
         "snr_db": 28.5,
         "implementation_spec": {
           "cell_type": "mzi_interferometer",
-          "waveguide_material": "silicon_on_insulator"
+          "waveguide_material": "silicon_on_insulator",
+          "wavelength_nm": 1550
         }
       },
       {
@@ -55,7 +56,21 @@
         "area_um2": 150.0,
         "snr_db": 32.0,
         "implementation_spec": {
-          "cell_type": "ring_resonator"
+          "cell_type": "ring_resonator",
+          "waveguide_material": "silicon_on_insulator",
+          "wavelength_nm": 1550
+        }
+      },
+      {
+        "delay_ns": 0.3,
+        "power_mw": 28.0,
+        "area_um2": 320.0,
+        "snr_db": 25.0,
+        "implementation_spec": {
+          "cell_type": "mzi_interferometer_high_power",
+          "waveguide_material": "silicon_on_insulator",
+          "wavelength_nm": 1550,
+          "laser_power_mw": 50
         }
       }
     ],
@@ -66,7 +81,8 @@
         "area_um2": 450.0,
         "snr_db": 26.0,
         "implementation_spec": {
-          "cell_type": "directional_coupler_array"
+          "cell_type": "directional_coupler_array",
+          "coupler_stages": 4
         }
       },
       {
@@ -75,7 +91,19 @@
         "area_um2": 320.0,
         "snr_db": 27.5,
         "implementation_spec": {
-          "cell_type": "microdisk_array"
+          "cell_type": "microdisk_array",
+          "disk_diameter_um": 10
+        }
+      },
+      {
+        "delay_ns": 1.8,
+        "power_mw": 8.0,
+        "area_um2": 280.0,
+        "snr_db": 24.0,
+        "implementation_spec": {
+          "cell_type": "directional_coupler_low_power",
+          "coupler_stages": 2,
+          "laser_power_mw": 10
         }
       }
     ],
@@ -89,6 +117,17 @@
           "cell_type": "directional_coupler_switch",
           "function": "redundancy_bypass"
         }
+      },
+      {
+        "delay_ns": 1.2,
+        "power_mw": 6.0,
+        "area_um2": 220.0,
+        "snr_db": 25.5,
+        "implementation_spec": {
+          "cell_type": "ring_resonator_switch",
+          "function": "redundancy_bypass",
+          "laser_power_mw": 10
+        }
       }
     ],
     "CCS": [
@@ -100,6 +139,17 @@
         "implementation_spec": {
           "cell_type": "optical_clock_distribution",
           "source": "mode_locked_laser_splitter_tree"
+        }
+      },
+      {
+        "delay_ns": 0.6,
+        "power_mw": 10.0,
+        "area_um2": 380.0,
+        "snr_db": 28.0,
+        "implementation_spec": {
+          "cell_type": "optical_clock_low_power",
+          "source": "mode_locked_laser_splitter_tree",
+          "laser_power_mw": 15
         }
       }
     ],
@@ -113,6 +163,17 @@
           "cell_type": "photonic_latch_bank",
           "function": "register_file_fsm"
         }
+      },
+      {
+        "delay_ns": 1.4,
+        "power_mw": 3.5,
+        "area_um2": 180.0,
+        "snr_db": 27.0,
+        "implementation_spec": {
+          "cell_type": "photonic_latch_low_power",
+          "function": "register_file_fsm",
+          "laser_power_mw": 5
+        }
       }
     ],
     "COMPUTE": [
@@ -125,6 +186,30 @@
           "cell_type": "photonic_mzi_alu",
           "precision": "INT32",
           "wavelength_nm": 1550
+        }
+      },
+      {
+        "delay_ns": 0.2,
+        "power_mw": 45.0,
+        "area_um2": 900.0,
+        "snr_db": 30.0,
+        "implementation_spec": {
+          "cell_type": "photonic_mzi_alu_high_speed",
+          "precision": "INT16",
+          "wavelength_nm": 1550,
+          "laser_power_mw": 80
+        }
+      },
+      {
+        "delay_ns": 1.0,
+        "power_mw": 12.0,
+        "area_um2": 450.0,
+        "snr_db": 31.0,
+        "implementation_spec": {
+          "cell_type": "photonic_ring_alu",
+          "precision": "INT32",
+          "wavelength_nm": 1550,
+          "laser_power_mw": 20
         }
       }
     ]

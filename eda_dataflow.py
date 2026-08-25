@@ -1,5 +1,5 @@
 """
-SP-EDA 数据流真实化模块 (Stage 2, v0.1.0)
+SP-EDA 数据流真实化模块 (Stage 2, v0.2.0)
 
 目标：把因果图从"每 op 一个独立 cell、信号只出现在注释里"升级为
       "信号→cell 分配 + 读回-传递-执行 的 RA-BUS 数据流序列"。
@@ -7,65 +7,84 @@ SP-EDA 数据流真实化模块 (Stage 2, v0.1.0)
 两个核心产物：
   1. allocate_cells(ir, cols)   — 数据流感知的 cell 分配器
        - 按因果拓扑序分配 cell（生产者先于消费者）
-       - 链式依赖的 op 放置到同一行相邻列 → 物理邻居互连可用
+       - 链式依赖的 op 放置到同一行相邻列 -> 物理邻居互连可用
        - 每个 op 的输出信号映射到其 cell
   2. build_exec_plan(ir, alloc) — 可执行计划
-       每个步骤形如 (op_index, micro_op, src_cells, dst_cell)：
+       每个步骤形如 (op_index, micro_ops, src_cells, dst_cell)：
+       - micro_ops: 该算子的完整微操作序列（4 条 PIM opcode，来自 eda_backend.OP_SEQUENCES）
        - src_cells: 该 op 消费的前驱输出 cell（需先 RA-BUS READ 读回）
        - dst_cell:  该 op 的结果存储 cell
 
-注意：micro-op 语义编码见 eda_rtlgen.CAUSAL_OP_TO_MICRO（占位，
-      待 Phase A5 NOMOS 约束规则精确定义）。
+v0.2.0 变更：移除占位 CAUSAL_OP_TO_MICRO，接入 eda_backend.py 的正式
+OP_SEQUENCES 微操作序列。每个 ExecStep 现在携带完整 4 步微操作序列，
+micro_op（lead opcode）保留用于向后兼容。
 """
 
 from typing import Dict, List, Tuple, Optional
 from collections import deque
 
-# ── 微码编码（与 eda_rtlgen.CAUSAL_OP_TO_MICRO 保持一致） ──
-CAUSAL_OP_TO_MICRO = {
-    "NS":      0x01,   # ADD     (placeholder)
-    "IAP":     0x08,   # CMP_EQ  (placeholder)
-    "LCH":     0x0B,   # CMP_GT  (placeholder)
-    "CCS":     0x00,   # NOP     (placeholder)
-    "STATE":   0x1B,   # STORE   (placeholder)
-    "COMPUTE": 0x05,   # MUL     (placeholder)
+from eda_backend import get_op_sequence, OP_NOP
+
+# -- 算子类型 -> 2 字母码（支持 CausalOpType 枚举和字符串） --
+_ENUM_TO_CODE = {
+    "NARRATIVE_STRIP": "NS",
+    "ASSUMPTION_DETECT": "IAP",
+    "VULNERABILITY_HEDGE": "LCH",
+    "CAUSAL_CLOCK_SYNC": "CCS",
+    "STATE_UPDATE": "STATE",
+    "COMPUTE": "COMPUTE",
 }
 
 # RA-BUS cell addressing (from spl_pim_compute_array.sv)
-#   cell(r,c) → ra_addr = (r<<24)|(c<<16), target bits[29:28]=00
+#   cell(r,c) -> ra_addr = (r<<24)|(c<<16), target bits[29:28]=00
 
 
 def _cell_addr(r: int, c: int) -> int:
     return (r << 24) | (c << 16)
 
 
-def _op_code(op_type) -> int:
-    """Map a CausalOpType (or string code) to a PIM micro-op."""
-    if hasattr(op_type, "value"):
-        # CausalOpType enum → uppercase code, e.g. NARRATIVE_STRIP → NS
+def _normalize_op_code(op_type) -> str:
+    """Normalize a CausalOpType enum or string to a 2-letter code."""
+    if hasattr(op_type, "name"):
         name = op_type.name.upper()
-        if name == "NARRATIVE_STRIP":
-            return CAUSAL_OP_TO_MICRO["NS"]
-        if name == "ASSUMPTION_DETECT":
-            return CAUSAL_OP_TO_MICRO["IAP"]
-        if name == "VULNERABILITY_HEDGE":
-            return CAUSAL_OP_TO_MICRO["LCH"]
-        if name == "CAUSAL_CLOCK_SYNC":
-            return CAUSAL_OP_TO_MICRO["CCS"]
-        if name == "STATE_UPDATE":
-            return CAUSAL_OP_TO_MICRO["STATE"]
-        if name == "COMPUTE":
-            return CAUSAL_OP_TO_MICRO["COMPUTE"]
-        return 0x00
-    return CAUSAL_OP_TO_MICRO.get(str(op_type).upper(), 0x00)
+        code = _ENUM_TO_CODE.get(name)
+        if code:
+            return code
+    s = str(op_type).upper()
+    if s in ("NS", "IAP", "LCH", "CCS", "STATE", "COMPUTE"):
+        return s
+    return "UNKNOWN"
+
+
+def _op_code(op_type) -> int:
+    """Map a CausalOpType (or string code) to the lead PIM micro-op.
+
+    Returns the first opcode of the formal micro-op sequence from eda_backend.
+    Kept for backward compatibility -- use _op_sequence() for the full sequence.
+    """
+    return _op_sequence(op_type)[1][0]
+
+
+def _op_sequence(op_type) -> Tuple[str, List[int]]:
+    """Return the full micro-op sequence for a causal op type.
+
+    Delegates to eda_backend.get_op_sequence() after normalizing the op type
+    to a 2-letter code (NS/IAP/LCH/CCS/STATE/COMPUTE).
+
+    Returns:
+        (description, [opcode, opcode, opcode, opcode])
+    """
+    code = _normalize_op_code(op_type)
+    return get_op_sequence(code)
 
 
 class CellAllocation:
-    """信号→cell 映射 + op→cell 映射 + 拓扑序。"""
+    """信号->cell 映射 + op->cell 映射 + 拓扑序。"""
+
     def __init__(self):
         self.signal_cell: Dict[str, Tuple[int, int]] = {}
         self.op_cell: Dict[int, Tuple[int, int]] = {}
-        self.topological: List[int] = []   # op_index 拓扑序
+        self.topological: List[int] = []  # op_index 拓扑序
 
 
 def allocate_cells(ir, array_cols: int = 64) -> CellAllocation:
@@ -73,29 +92,29 @@ def allocate_cells(ir, array_cols: int = 64) -> CellAllocation:
     数据流感知的 cell 分配器。
 
     策略：
-      - 使用 ir.dataflow（信号→消费者）与生产关系做拓扑排序（Kahn）。
+      - 使用 ir.dataflow（信号->消费者）与生产关系做拓扑排序（Kahn）。
       - 按拓扑序逐 op 分配 cell，行优先，链式依赖的 op 天然落相邻列。
       - op 的每个输出信号映射到该 op 的 cell；顶层输入不占 cell
         （值由 RA-BUS 外部提供）。
 
     约束：
-      - 数组大小必须 ≥ op 数量（否则无法完成分配）。
+      - 数组大小必须 >= op 数量（否则无法完成分配）。
     """
     alloc = CellAllocation()
     n_ops = len(ir.ops)
 
     if n_ops > array_cols * 64:
         raise ValueError(
-            f"数据流分配失败：{n_ops} 个算子超过 64×{array_cols} cell 容量"
+            f"数据流分配失败：{n_ops} 个算子超过 64x{array_cols} cell 容量"
         )
 
-    # ── 生产关系：信号 → 生产者 op_index ──
+    # -- 生产关系：信号 -> 生产者 op_index --
     producer: Dict[str, int] = {}
     for i, op in enumerate(ir.ops):
         for out in op.outputs:
             producer[out] = i
 
-    # ── Kahn 拓扑排序（按 ir.ops 顺序作为稳定性参考） ──
+    # -- Kahn 拓扑排序（按 ir.ops 顺序作为稳定性参考） --
     in_degree = [0] * n_ops
     consumers: Dict[int, List[int]] = {i: [] for i in range(n_ops)}
     for i, op in enumerate(ir.ops):
@@ -115,11 +134,13 @@ def allocate_cells(ir, array_cols: int = 64) -> CellAllocation:
             if in_degree[j] == 0:
                 queue.append(j)
     if len(topo) != n_ops:
-        raise ValueError("数据流分配失败：因果图存在循环依赖（应先通过 CausalIR.validate）")
+        raise ValueError(
+            "数据流分配失败：因果图存在循环依赖（应先通过 CausalIR.validate）"
+        )
 
     alloc.topological = topo
 
-    # ── 按拓扑序分配 cell（行优先） ──
+    # -- 按拓扑序分配 cell（行优先） --
     for idx, op_index in enumerate(topo):
         r = idx // array_cols
         c = idx % array_cols
@@ -142,41 +163,63 @@ def _src_of_op(ir, op_index: int, alloc: CellAllocation) -> List[Tuple[str, int,
 
 
 class ExecStep:
-    """单个执行步骤：读回源 cell → 对目标 cell 执行 micro-op。"""
-    def __init__(self, op_index: int, op_type: str,
-                 src_cells: List[Tuple[str, int, int]],
-                 dst_cell: Tuple[int, int],
-                 micro_op: int, cell_name: str):
+    """单个执行步骤：读回源 cell -> 对目标 cell 执行微操作序列。
+
+    v0.2.0: micro_ops 携带完整 4 步微操作序列（来自 eda_backend.OP_SEQUENCES）。
+    micro_op 保留为 lead opcode（序列第一条），用于向后兼容。
+    """
+
+    def __init__(
+        self,
+        op_index: int,
+        op_type: str,
+        src_cells: List[Tuple[str, int, int]],
+        dst_cell: Tuple[int, int],
+        micro_op: int,
+        cell_name: str,
+        micro_ops: Optional[List[int]] = None,
+        micro_seq_desc: str = "",
+    ):
         self.op_index = op_index
         self.op_type = op_type
-        self.src_cells = src_cells            # (signal_name, row, col)
-        self.dst_cell = dst_cell              # (row, col)
-        self.micro_op = micro_op
+        self.src_cells = src_cells  # (signal_name, row, col)
+        self.dst_cell = dst_cell  # (row, col)
+        self.micro_op = micro_op  # lead opcode (backward compat)
         self.cell_name = cell_name
+        self.micro_ops = micro_ops if micro_ops is not None else [micro_op]
+        self.micro_seq_desc = micro_seq_desc
 
 
-def build_exec_plan(ir, alloc: CellAllocation,
-                    cell_names: Optional[Dict[int, str]] = None) -> List[ExecStep]:
+def build_exec_plan(
+    ir, alloc: CellAllocation, cell_names: Optional[Dict[int, str]] = None
+) -> List[ExecStep]:
     """
     生成可执行计划。每个 op 一个步骤：
       - src_cells: 需先读回的前驱 cell（数据依赖）
       - dst_cell:  结果存储 cell
+      - micro_ops: 完整微操作序列（4 条 opcode，来自 eda_backend.OP_SEQUENCES）
+      - micro_op:  lead opcode（序列首条，向后兼容）
     """
     plan: List[ExecStep] = []
     for op_index in alloc.topological:
         op = ir.ops[op_index]
-        micro = _op_code(op.op_type)
+        seq_desc, seq_opcodes = _op_sequence(op.op_type)
+        lead = seq_opcodes[0] if seq_opcodes else OP_NOP
         srcs = _src_of_op(ir, op_index, alloc)
         dst = alloc.op_cell[op_index]
         name = ""
         if cell_names and op_index in cell_names:
             name = cell_names[op_index]
-        plan.append(ExecStep(
-            op_index=op_index,
-            op_type=op.op_type,
-            src_cells=srcs,
-            dst_cell=dst,
-            micro_op=micro,
-            cell_name=name,
-        ))
+        plan.append(
+            ExecStep(
+                op_index=op_index,
+                op_type=op.op_type,
+                src_cells=srcs,
+                dst_cell=dst,
+                micro_op=lead,
+                cell_name=name,
+                micro_ops=seq_opcodes,
+                micro_seq_desc=seq_desc,
+            )
+        )
     return plan

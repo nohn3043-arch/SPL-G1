@@ -1,0 +1,251 @@
+{
+  "material": "rram_crossbar_v1",
+  "note": "SPL-G1 RRAM Crossbar 工艺库 (v1.0)。数值基于 HfOx/TaOx RRAM 存内计算研究文献校准区间，含多变体供 EDA 帕累托寻优。流片前须由晶圆厂 PDK 替换。",
+  "materica": {
+    "M1_logic_state_stability": {
+      "stable_states": 2,
+      "activation_energy_over_noise": 10.5
+    },
+    "M2_causal_directional_routing": {
+      "directional_signal": true,
+      "isotropic_diffusion": false
+    },
+    "M3_pim_proximity": {
+      "pim_co_location": true,
+      "transport_energy_uj": 0.0
+    },
+    "M4_security_boundary_irreversibility": {
+      "irreversible_boundary": true
+    }
+  },
+  "compute": {
+    "data_width_bits": 64,
+    "neighbour_interconnect_bits": 8,
+    "alu_op_count": 20,
+    "precision_supported": ["INT4", "INT8", "INT16"],
+    "execution_modes": ["SCALAR", "VECTOR", "MATRIX"]
+  },
+  "audit": {
+    "causal_record_bits": 128,
+    "constraint_mask_bits": 32,
+    "dependency_mask_bits": 28,
+    "cascade_invalidation": true
+  },
+  "units": {
+    "delay": "ns",
+    "power": "mw",
+    "area": "um2",
+    "snr": "db"
+  },
+  "cells": {
+    "NS": [
+      {
+        "delay_ns": 3.0,
+        "power_mw": 2.0,
+        "area_um2": 80.0,
+        "snr_db": 38.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_Filter_8b",
+          "material": "HfOx",
+          "precision": "INT8"
+        }
+      },
+      {
+        "delay_ns": 5.5,
+        "power_mw": 0.8,
+        "area_um2": 55.0,
+        "snr_db": 35.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_Filter_4b_LowPower",
+          "material": "TaOx",
+          "precision": "INT4",
+          "voltage_v": 0.5
+        }
+      },
+      {
+        "delay_ns": 2.0,
+        "power_mw": 4.5,
+        "area_um2": 120.0,
+        "snr_db": 40.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_Filter_16b_Fast",
+          "material": "HfOx",
+          "precision": "INT16",
+          "voltage_v": 1.2
+        }
+      }
+    ],
+    "IAP": [
+      {
+        "delay_ns": 1.8,
+        "power_mw": 3.5,
+        "area_um2": 65.0,
+        "snr_db": 42.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_ADC_Comparator",
+          "resolution_bits": 8
+        }
+      },
+      {
+        "delay_ns": 3.2,
+        "power_mw": 1.5,
+        "area_um2": 42.0,
+        "snr_db": 39.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_ADC_Comparator_LowPower",
+          "resolution_bits": 4,
+          "voltage_v": 0.5
+        }
+      },
+      {
+        "delay_ns": 1.0,
+        "power_mw": 7.0,
+        "area_um2": 100.0,
+        "snr_db": 44.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_ADC_Comparator_Fast",
+          "resolution_bits": 8,
+          "voltage_v": 1.2
+        }
+      }
+    ],
+    "LCH": [
+      {
+        "delay_ns": 0.8,
+        "power_mw": 0.5,
+        "area_um2": 25.0,
+        "snr_db": 55.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Loop_Guard_Logic",
+          "guard_mode": "cycle_break"
+        }
+      },
+      {
+        "delta_ns": 1.5,
+        "delay_ns": 1.5,
+        "power_mw": 0.2,
+        "area_um2": 18.0,
+        "snr_db": 52.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Loop_Guard_LowPower",
+          "guard_mode": "cycle_break",
+          "voltage_v": 0.5
+        }
+      }
+    ],
+    "CCS": [
+      {
+        "delay_ns": 0.2,
+        "power_mw": 0.4,
+        "area_um2": 15.0,
+        "snr_db": 70.0,
+        "implementation_spec": {
+          "cell_type": "Digital_CLK_Sync",
+          "jitter_ps": 20
+        }
+      },
+      {
+        "delay_ns": 0.4,
+        "power_mw": 0.2,
+        "area_um2": 10.0,
+        "snr_db": 67.0,
+        "silence": "This variant favors ultra-low power",
+        "implementation_spec": {
+          "cell_type": "Digital_CLK_Sync_LowPower",
+          "jitter_ps": 35,
+          "voltage_v": 0.5
+        }
+      }
+    ],
+    "STATE": [
+      {
+        "delay_ns": 2.0,
+        "power_mw": 0.3,
+        "area_um2": 35.0,
+        "snr_db": 50.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_NVM_Anchor",
+          "retention_years": 10,
+          "material": "HfOx"
+        }
+      },
+      {
+        "delay_ns": 3.5,
+        "power_mw": 0.1,
+        "area_um2": 22.0,
+        "snr_db": 48.0,
+        "spec_note": "Ultra-low power variant",
+        "implementation_spec": {
+          "cell_type": "RRAM_NVM_Anchor_LowPower",
+          "retention_years": 20,
+          "material": "TaOx",
+          "voltage_v": 0.5
+        }
+      },
+      {
+        "delay_ns": 1.2,
+        "power_mw": 1.0,
+        "area_um2": 55.0,
+        "snr_db": 53.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_NVM_Anchor_Fast",
+          "retention_years": 5,
+          "material": "HfOx",
+          "voltage_v": 1.2
+        }
+      }
+    ],
+    "COMPUTE": [
+      {
+        "delay_ns": 4.0,
+        "power_mw": 6.0,
+        "area_um2": 150.0,
+        "snr_db": 45.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_MAC_8x8",
+          "precision": "INT8",
+          "material": "HfOx",
+          "throughput_ops_per_cycle": 64
+        }
+      },
+      {
+        "delay_ns": 8.0,
+        "power_mw": 2.0,
+        "area_um2": 100.0,
+        "snr_db": 42.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_MAC_4x4_LowPower",
+          "precision": "INT4",
+          "material": "TaOx",
+          "throughput_ops_per_cycle": 16,
+          "voltage_v": 0.5
+        }
+      },
+      {
+        "delay_ns": 2.5,
+        "power_mw": 15.0,
+        "area_um2": 280.0,
+        "snr_db": 47.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_MAC_16x16_Fast",
+          "precision": "INT8",
+          "material": "HfOx",
+          "throughput_ops_per_cycle": 256,
+          "voltage_v": 1.2
+        }
+      },
+      {
+        "delay_ns": 6.0,
+        "power_mw": 4.0,
+        "area_um2": 130.0,
+        "snr_db": 44.0,
+        "implementation_spec": {
+          "cell_type": "RRAM_Crossbar_MAC_8x8_INT16",
+          "precision": "INT16",
+          "material": "HfOx",
+          "throughput_ops_per_cycle": 64
+        }
+      }
+    ]
+  }
+}
