@@ -1,0 +1,26 @@
+{
+  "design_name": "min_chain",
+  "description": "最小冒烟夹具：2 算子因果链 (NS -> STATE)，供 eda_regress.py 快速自检，与 examples/ 大样例解耦。",
+  "inputs": [
+    "signal_a"
+  ],
+  "outputs": [
+    "verdict"
+  ],
+  "operators": [
+    {
+      "op_type": "NS",
+      "inputs": ["signal_a"],
+      "outputs": ["stripped_a"],
+      "params": {
+        "target": "logic_only"
+      }
+    },
+    {
+      "op_type": "STATE",
+      "inputs": ["stripped_a"],
+      "outputs": ["verdict"],
+      "params": {}
+    }
+  ]
+}
