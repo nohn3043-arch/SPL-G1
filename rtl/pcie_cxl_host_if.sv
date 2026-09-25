@@ -72,9 +72,13 @@ module pcie_cxl_host_if #(
     bar0_regs_t bar0;
 
     // ── Response FIFO for completion TLPs ──
+    // NOTE (iverilog): declared PACKED so a variable index (resp_fifo_tail /
+    // resp_fifo_head) is legal inside always_ff. An unpacked declaration
+    // triggers "constant selects in always_* processes are not currently
+    // supported" and the module fails to elaborate.
     localparam int FIFO_DEPTH = 16;
-    logic [DATA_W-1:0] resp_fifo_data [0:FIFO_DEPTH-1];
-    logic [15:0]       resp_fifo_reqid [0:FIFO_DEPTH-1];
+    logic [FIFO_DEPTH-1:0][DATA_W-1:0] resp_fifo_data;
+    logic [FIFO_DEPTH-1:0][15:0]       resp_fifo_reqid;
     logic [3:0]        resp_fifo_head, resp_fifo_tail;
     logic              resp_fifo_empty, resp_fifo_full;
 

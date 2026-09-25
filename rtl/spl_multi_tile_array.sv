@@ -1,9 +1,40 @@
 // ============================================================================
 // spl_multi_tile_array — Scalable Multi-Tile SPL-G1 Array
 // ============================================================================
-// Parameterized 2D array of SPL-G1 tiles connected via Mesh NoC.
+// Parameterized 2D array of SPL-G1 tiles interconnected by a 2D mesh NoC.
 // Supports configurations from 1x1 (256 PIM units) up to 64x64 (4096 tiles,
-// 1,048,576 PIM units = 16MB total on-chip SRAM) for commercial deployment.
+// 1,048,576 PIM units) for commercial deployment.
+//
+// REPAIRED + NoC IMPLEMENTED (2026-09-25):
+//   - Port map no longer uses genvar ternaries (Icarus: "reference to a wire
+//     or reg (`y') is not allowed in a constant expression").
+//   - Status aggregation uses generate-flattened vectors (no variable
+//     indexing into unpacked arrays inside always_*).
+//   - INTER-TILE NoC IS NOW WIRED with EIGHT independent bus groups, i.e.
+//     each direction gets its own send bus and its own receive bus.
+//     The original revision drove both tile(k,x).south_out_* and
+//     tile(k-1,x).north_out_* onto ONE net ns_*[k][x] (two drivers per net,
+//     not realizable). Splitting send/receive removes the multi-driver
+//     conflict and makes multi-hop forwarding well defined.
+//
+// Bus naming (all constant-indexed via generate):
+//   Vertical   (y axis):
+//     v_dn_*[k][x]  — packet entering tile(k,x) from ABOVE
+//                     (driven by tile(k-1,x).south_out)
+//     v_up_*[k][x]  — packet sent UP by tile(k,x)
+//                     (consumed by tile(k-1,x).south_in)
+//   Horizontal (x axis):
+//     h_rt_*[y][k]  — packet entering tile(y,k) from the LEFT
+//                     (driven by tile(y,k-1).east_out)
+//     h_lt_*[y][k]  — packet sent LEFT by tile(y,k)
+//                     (consumed by tile(y,k-1).east_in)
+//   A `_r` suffix is the reverse-direction ready of the same link.
+//
+// Host attachment: host_valid/data/dest inject into tile(0,0).west_in, and
+// tile(0,0).west_out returns via host_resp_*.
+//
+// NOTE: routing itself (XY) lives in spl_mesh_router; this module only
+// provides the physical links. Buffering/credit flow control still pending.
 //
 // License: SPL-G1 dual-track (see LICENSE)
 // ============================================================================
@@ -33,24 +64,81 @@ module spl_multi_tile_array #(
     output logic                        all_done
 );
 
-    // ── Inter-tile Mesh connections ──
-    // North/South connections: [tile_y][tile_x]
-    logic [DATA_W-1:0] ns_data  [0:TILE_ROWS][0:TILE_COLS-1];
-    logic              ns_valid [0:TILE_ROWS][0:TILE_COLS-1];
-    logic [ADDR_W-1:0] ns_dest  [0:TILE_ROWS][0:TILE_COLS-1];
-    logic              ns_ready [0:TILE_ROWS][0:TILE_COLS-1];
+    // ═══════════════════════════════════════════════════════════════════
+    // Mesh link buses — 8 groups (4 directions x send/receive)
+    // ═══════════════════════════════════════════════════════════════════
+    // Vertical (rows+1 slots: index k = link between row k-1 and row k)
+    logic              v_dn_v [0:TILE_ROWS][0:TILE_COLS-1];
+    logic [DATA_W-1:0] v_dn_d [0:TILE_ROWS][0:TILE_COLS-1];
+    logic [ADDR_W-1:0] v_dn_k [0:TILE_ROWS][0:TILE_COLS-1];
+    logic              v_dn_r [0:TILE_ROWS][0:TILE_COLS-1];
 
-    // East/West connections: [tile_y][tile_x]
-    logic [DATA_W-1:0] ew_data  [0:TILE_ROWS-1][0:TILE_COLS];
-    logic              ew_valid [0:TILE_ROWS-1][0:TILE_COLS];
-    logic [ADDR_W-1:0] ew_dest  [0:TILE_ROWS-1][0:TILE_COLS];
-    logic              ew_ready [0:TILE_ROWS-1][0:TILE_COLS];
+    logic              v_up_v [0:TILE_ROWS][0:TILE_COLS-1];
+    logic [DATA_W-1:0] v_up_d [0:TILE_ROWS][0:TILE_COLS-1];
+    logic [ADDR_W-1:0] v_up_k [0:TILE_ROWS][0:TILE_COLS-1];
+    logic              v_up_r [0:TILE_ROWS][0:TILE_COLS-1];
 
-    // Tile status signals
+    // Horizontal (cols+1 slots: index k = link between col k-1 and col k)
+    logic              h_rt_v [0:TILE_ROWS-1][0:TILE_COLS];
+    logic [DATA_W-1:0] h_rt_d [0:TILE_ROWS-1][0:TILE_COLS];
+    logic [ADDR_W-1:0] h_rt_k [0:TILE_ROWS-1][0:TILE_COLS];
+    logic              h_rt_r [0:TILE_ROWS-1][0:TILE_COLS];
+
+    logic              h_lt_v [0:TILE_ROWS-1][0:TILE_COLS];
+    logic [DATA_W-1:0] h_lt_d [0:TILE_ROWS-1][0:TILE_COLS];
+    logic [ADDR_W-1:0] h_lt_k [0:TILE_ROWS-1][0:TILE_COLS];
+    logic              h_lt_r [0:TILE_ROWS-1][0:TILE_COLS];
+
+    // ── Tile status ──
     logic tile_busy [0:TILE_ROWS-1][0:TILE_COLS-1];
     logic tile_done [0:TILE_ROWS-1][0:TILE_COLS-1];
 
-    // ── Generate tile array ──
+    // ═══════════════════════════════════════════════════════════════════
+    // Boundary tie-offs (derive from boundary tiles / terminate at edges)
+    // ═══════════════════════════════════════════════════════════════════
+    generate
+        for (genvar bx = 0; bx < TILE_COLS; bx = bx + 1) begin : gen_ns_edge
+            // North edge: nothing arrives into row 0 from above.
+            assign v_dn_v[0][bx] = 1'b0;
+            assign v_dn_d[0][bx] = {DATA_W{1'b0}};
+            assign v_dn_k[0][bx] = {ADDR_W{1'b0}};
+            // South edge: last row's outward links terminate with ready.
+            assign v_dn_r[TILE_ROWS][bx] = 1'b1;
+            assign v_up_v[TILE_ROWS][bx] = 1'b0;
+            assign v_up_d[TILE_ROWS][bx] = {DATA_W{1'b0}};
+            assign v_up_k[TILE_ROWS][bx] = {ADDR_W{1'b0}};
+            assign v_up_r[TILE_ROWS][bx] = 1'b1;
+        end
+    endgenerate
+
+    generate
+        for (genvar by2 = 0; by2 < TILE_ROWS; by2 = by2 + 1) begin : gen_ew_edge
+            // East edge: rightmost column's eastward sends terminate with ready.
+            assign h_rt_r[by2][TILE_COLS] = 1'b1;
+        end
+    endgenerate
+
+    // West edge: column 0 receives from the host in row 0, else tied off.
+    // h_lt_r[y][0] is the ready for tile(y,0).west_out (host consumes row 0).
+    generate
+        for (genvar by3 = 0; by3 < TILE_ROWS; by3 = by3 + 1) begin : gen_west_edge
+            if (by3 == 0) begin : gen_host_in
+                assign h_rt_v[0][0] = host_valid;
+                assign h_rt_d[0][0] = host_data;
+                assign h_rt_k[0][0] = host_dest;
+                assign h_lt_r[0][0] = host_resp_ready;
+            end else begin : gen_tie
+                assign h_rt_v[by3][0] = 1'b0;
+                assign h_rt_d[by3][0] = {DATA_W{1'b0}};
+                assign h_rt_k[by3][0] = {ADDR_W{1'b0}};
+                assign h_lt_r[by3][0] = 1'b1;
+            end
+        end
+    endgenerate
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Tile array with full mesh interconnect
+    // ═══════════════════════════════════════════════════════════════════
     generate
         for (genvar y = 0; y < TILE_ROWS; y = y + 1) begin : gen_tile_row
             for (genvar x = 0; x < TILE_COLS; x = x + 1) begin : gen_tile_col
@@ -58,70 +146,79 @@ module spl_multi_tile_array #(
                     .clk, .rst_n,
                     .tile_x(8'(x)), .tile_y(8'(y)),
 
-                    // North port: connect to south port of tile above, or tie off at top edge
-                    .north_in_valid  (y == 0 ? 1'b0 : ns_valid[y][x]),
-                    .north_in_data   (y == 0 ? '0   : ns_data[y][x]),
-                    .north_in_dest   (y == 0 ? '0   : ns_dest[y][x]),
-                    .north_in_ready  (ns_ready[y][x]),
-                    .north_out_valid (ns_valid[y+1][x]),
-                    .north_out_data  (ns_data[y+1][x]),
-                    .north_out_dest  (ns_dest[y+1][x]),
-                    .north_out_ready (y == TILE_ROWS-1 ? 1'b1 : ns_ready[y+1][x]),
+                    // North: receive from above (v_dn[y]), send up (v_up[y])
+                    .north_in_valid (v_dn_v[y][x]),
+                    .north_in_data  (v_dn_d[y][x]),
+                    .north_in_dest  (v_dn_k[y][x]),
+                    .north_in_ready (v_dn_r[y][x]),
+                    .north_out_valid(v_up_v[y][x]),
+                    .north_out_data (v_up_d[y][x]),
+                    .north_out_dest (v_up_k[y][x]),
+                    .north_out_ready(v_up_r[y+1][x]),
 
-                    // South port: connect to north port of tile below, or tie off at bottom edge
-                    .south_in_valid  (y == TILE_ROWS-1 ? 1'b0 : ns_valid[y+1][x]),
-                    .south_in_data   (y == TILE_ROWS-1 ? '0   : ns_data[y+1][x]),
-                    .south_in_dest   (y == TILE_ROWS-1 ? '0   : ns_dest[y+1][x]),
-                    .south_in_ready  (ns_ready[y+1][x]),
-                    .south_out_valid (ns_valid[y][x]),
-                    .south_out_data  (ns_data[y][x]),
-                    .south_out_dest  (ns_dest[y][x]),
-                    .south_out_ready (y == 0 ? 1'b1 : ns_ready[y][x]),
+                    // South: receive from below (v_up[y+1]), send down (v_dn[y+1])
+                    .south_in_valid (v_up_v[y+1][x]),
+                    .south_in_data  (v_up_d[y+1][x]),
+                    .south_in_dest  (v_up_k[y+1][x]),
+                    .south_in_ready (v_up_r[y][x]),
+                    .south_out_valid(v_dn_v[y+1][x]),
+                    .south_out_data (v_dn_d[y+1][x]),
+                    .south_out_dest (v_dn_k[y+1][x]),
+                    .south_out_ready(v_dn_r[y+1][x]),
 
-                    // West port: connect to east port of tile to left, or host at (0,0)
-                    .west_in_valid   (x == 0 ? (y == 0 ? host_valid : 1'b0) : ew_valid[y][x]),
-                    .west_in_data    (x == 0 ? (y == 0 ? host_data : '0) : ew_data[y][x]),
-                    .west_in_dest    (x == 0 ? (y == 0 ? host_dest : '0) : ew_dest[y][x]),
-                    .west_in_ready   (x == 0 ? (y == 0 ? host_ready : 1'b0) : ew_ready[y][x]),
-                    .west_out_valid  (ew_valid[y][x+1]),
-                    .west_out_data   (ew_data[y][x+1]),
-                    .west_out_dest   (ew_dest[y][x+1]),
-                    .west_out_ready  (x == TILE_COLS-1 ? 1'b1 : ew_ready[y][x+1]),
+                    // West: receive from left (h_rt[y]), send left (h_lt[y])
+                    .west_in_valid  (h_rt_v[y][x]),
+                    .west_in_data   (h_rt_d[y][x]),
+                    .west_in_dest   (h_rt_k[y][x]),
+                    .west_in_ready  (h_rt_r[y][x]),
+                    .west_out_valid (h_lt_v[y][x]),
+                    .west_out_data  (h_lt_d[y][x]),
+                    .west_out_dest  (h_lt_k[y][x]),
+                    .west_out_ready (h_lt_r[y][x]),
 
-                    // East port: connect to west port of tile to right, or tie off at right edge
-                    .east_in_valid   (x == TILE_COLS-1 ? 1'b0 : ew_valid[y][x+1]),
-                    .east_in_data    (x == TILE_COLS-1 ? '0   : ew_data[y][x+1]),
-                    .east_in_dest    (x == TILE_COLS-1 ? '0   : ew_dest[y][x+1]),
-                    .east_in_ready   (ew_ready[y][x+1]),
-                    .east_out_valid  (ew_valid[y][x]),
-                    .east_out_data   (ew_data[y][x]),
-                    .east_out_dest   (ew_dest[y][x]),
-                    .east_out_ready  (x == 0 ? (y == 0 ? host_resp_ready : 1'b1) : ew_ready[y][x]),
+                    // East: receive from right (h_lt[y+1 col]), send right (h_rt[x+1])
+                    .east_in_valid  (h_lt_v[y][x+1]),
+                    .east_in_data   (h_lt_d[y][x+1]),
+                    .east_in_dest   (h_lt_k[y][x+1]),
+                    .east_in_ready  (h_lt_r[y][x+1]),
+                    .east_out_valid (h_rt_v[y][x+1]),
+                    .east_out_data  (h_rt_d[y][x+1]),
+                    .east_out_dest  (h_rt_k[y][x+1]),
+                    .east_out_ready (h_rt_r[y][x+1]),
 
-                    // Configuration: broadcast to all tiles
-                    .cfg_valid(global_run),
-                    .cfg_data({112'd0, global_start_pc}),
-                    .tile_busy(tile_busy[y][x]),
-                    .tile_done(tile_done[y][x])
+                    // ── Global broadcast config ──
+                    .cfg_valid      (global_run),
+                    .cfg_data       ({112'd0, global_start_pc}),
+                    .tile_busy      (tile_busy[y][x]),
+                    .tile_done      (tile_done[y][x])
                 );
             end
         end
     endgenerate
 
-    // ── Global status aggregation ──
-    always_comb begin
-        all_busy = 1'b0;
-        all_done = 1'b1;
-        for (int y = 0; y < TILE_ROWS; y++) begin
-            for (int x = 0; x < TILE_COLS; x++) begin
-                all_busy |= tile_busy[y][x];
-                all_done &= tile_done[y][x];
+    // ═══════════════════════════════════════════════════════════════════
+    // Host response path (tile(0,0).west_out → host)
+    // ═══════════════════════════════════════════════════════════════════
+    assign host_ready      = h_rt_r[0][0];
+    assign host_resp_valid = h_lt_v[0][0];
+    assign host_resp_data  = h_lt_d[0][0];
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Global status aggregation (generate-flattened; no variable indexing)
+    // ═══════════════════════════════════════════════════════════════════
+    logic [TILE_ROWS*TILE_COLS-1:0] busy_flat;
+    logic [TILE_ROWS*TILE_COLS-1:0] done_flat;
+
+    generate
+        for (genvar gy = 0; gy < TILE_ROWS; gy = gy + 1) begin : gen_flat_row
+            for (genvar gx = 0; gx < TILE_COLS; gx = gx + 1) begin : gen_flat_col
+                assign busy_flat[gy*TILE_COLS+gx] = tile_busy[gy][gx];
+                assign done_flat[gy*TILE_COLS+gx] = tile_done[gy][gx];
             end
         end
-    end
+    endgenerate
 
-    // ── Host response: route responses from (0,0) east port back to host ──
-    assign host_resp_valid = ew_valid[0][0];
-    assign host_resp_data  = ew_data[0][0];
+    assign all_busy = |busy_flat;
+    assign all_done = &done_flat;
 
 endmodule

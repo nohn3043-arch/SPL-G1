@@ -23,6 +23,7 @@ help:
 	@echo "  make demo-rtl-industrial # 工业流水线+RTL+SVA全工件生成"
 	@echo "  make build DESC=<json> # 编译指定因果设计"
 	@echo "  make sim               # 运行RTL仿真并生成波形"
+	@echo "  make sim-commercial    # 商用链路2x2全链接口冒烟(Commercial Top)"
 	@echo "  make wave              # 打开波形查看器"
 	@echo "  make clean             # 清理输出文件和临时文件"
 	@echo ""
@@ -112,6 +113,22 @@ sim:
 	$(VVP) $(SIM_BIN)
 	@echo "仿真完成，波形文件: $(WAVE_FILE)"
 
+# ── 商用链路编译/冒烟（2x2 全链接口回归） ──
+# 覆盖 G1_Commercial_Top -> spl_multi_tile_array -> spl_tile -> spl_mesh_router
+#      -> spl_pim_sequencer / spl_pim_compute_array + pcie_cxl_host_if
+COMM_BIN = g1_commercial_sim
+COMM_SRC = rtl/G1_Commercial_Top.sv rtl/spl_multi_tile_array.sv rtl/spl_tile.sv \
+           rtl/spl_mesh_router.sv rtl/spl_pim_compute_array.sv rtl/spl_pim_cell.sv \
+           rtl/spl_pim_sequencer.sv rtl/pcie_cxl_host_if.sv rtl/tb_G1_Commercial.sv
+
+.PHONY: commercial-build
+commercial-build:
+	$(IVERILOG) -g2012 -I rtl -o $(COMM_BIN) $(COMM_SRC)
+
+.PHONY: sim-commercial
+sim-commercial: commercial-build
+	$(VVP) $(COMM_BIN)
+
 # 打开波形
 .PHONY: wave
 wave:
@@ -152,6 +169,7 @@ splcc-bridge:
 # 清理
 .PHONY: clean
 clean:
-	rm -f $(SIM_BIN) $(WAVE_FILE) g1_eda_sim
+	rm -f $(SIM_BIN) $(WAVE_FILE) g1_eda_sim $(COMM_BIN)
+	rm -f g1_commercial_wave.vcd
 	rm -f outputs/*.json
 	@echo "清理完成"
