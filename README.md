@@ -101,7 +101,7 @@ python splcc.py tests/loop_sub.c --verify
 - **EDA toolchain (pure Python, standard library only)** — `eda_cli.py` drives parse → map → build → export → RTL generation (`eda_parser.py` / `eda_mapper.py` / `eda_exporter.py` / `eda_rtlgen.py` / `EDA_fixed.py`).
 - **splcc — C-subset compiler v0.1** — compiles a restricted C dialect (int variables, `for` / `while` / `if-else`, arithmetic, comparison) into SPL-G1 microcode CONFIG words, with `--verify` interpreter mode (A3).
 - **RTL (SystemVerilog / Verilog)** — integrated top `G1_Top_Integrated.sv` (v3, Phase A) and `G1_Commercial_Top.sv`; core units `spl_pim_cell.sv` (v2, 32-operand + FP16), `spl_pim_compute_array.sv` (v2.1), `spl_pim_sequencer.sv` (v4 control flow / v5 bus readback), `spl_cim_causal_unit.sv` (v2), `ra_bus_arbiter.sv`, `ext_mem_controller.sv`, `materica_compliance_unit.sv` (v2); extension units `spl_tile.sv`, `spl_multi_tile_array.sv`, `spl_mesh_router.sv`, `spl_pim_reduce_tree.sv`; host interface `pcie_cxl_host_if.sv`, legacy `g1_compute_core.sv` / `G1_Top_Interface.v`; testbenches `tb_G1_Integrated.sv` (v3), `tb_cell_v2.sv`, `tb_pim_compute_array.sv`, `tb_materica_compliance.sv`, `tb_G1_Top.sv`.
-- **PDK packages** — `silicon_cim_v1.json` (28nm CIM) and `optical_mzi_photonics_v1.json` (photonic).
+- **PDK packages** — `silicon_cim_v1.json` (28nm CIM), `optical_mzi_photonics_v1.json` (photonic), and `rram_crossbar_v1.json` (RRAM crossbar).
 
 </div>
 
@@ -118,6 +118,9 @@ python splcc.py tests/loop_sub.c --verify
 | `make demo-optical` | Photonic PDK demo |
 | `make demo-full` | Full pipeline (COMPUTE operator + `params` consumption) |
 | `make demo-hetero` | Single-die heterogeneous mixed-material demo |
+| `make demo-industrial` | Industrial safety-audit pipeline (32 operators, L1, 16×16 array) |
+| `make demo-rram` | RRAM crossbar PDK demo |
+| `make demo-rtl-industrial` | Industrial pipeline + RTL + SVA full artifact generation |
 | `make build DESC=<json>` | Compile a custom causal design |
 | `make sim` / `make wave` | RTL simulation / open waveform |
 | `make rtlgen` / `make rtlgen-apply` | EDA → RTL package generation (apply patch to RTL) |
@@ -136,8 +139,9 @@ python splcc.py tests/loop_sub.c --verify
 ```
 SPL-G1/
 ├── eda_cli.py / eda_parser.py / eda_mapper.py / eda_exporter.py /
-│   eda_rtlgen.py / EDA_fixed.py / eda_dataflow.py / eda_pdk_report.py
-│                                   # EDA toolchain (pure Python)
+│   eda_rtlgen.py / EDA_fixed.py / eda_dataflow.py / eda_pdk_report.py /
+│   eda_backend.py / eda_regress.py / chip_adaptation.py / chip_requirements.json
+│                                   # EDA toolchain (pure Python) + chip adaptation
 ├── splcc.py / splcc_bridge.py      # C-subset -> SPL-G1 microcode compiler (v0.1)
 ├── Makefile                        # demo / build / sim / splcc targets
 ├── rtl/
@@ -158,11 +162,11 @@ SPL-G1/
 │   ├── tb_pim_compute_array.sv     # PIM array standalone test
 │   ├── tb_materica_compliance.sv   # Materica compliance unit test
 │   └── tb_G1_Top.sv                # Legacy top test
-├── pdk/                            # silicon_cim_v1.json, optical_mzi_photonics_v1.json
-├── examples/                       # causal / cognitive audit / full pipeline / heterogeneous demos
-├── tests/                          # loop_sub.c (splcc test source)
+├── pdk/                            # silicon_cim_v1.json, optical_mzi_photonics_v1.json, rram_crossbar_v1.json
+├── examples/                       # causal / cognitive audit / full pipeline / heterogeneous / industrial demos
+├── tests/                          # loop_sub.c (splcc test source), fixtures/min_chain.json
 ├── outputs/                        # Generated netlists / VCD waveforms / RTL artifacts
-├── docs/                           # ra_bus_protocol.md, BASELINE.md, EDA_ITERATION_DONE.md, history/, SPL-EDA 说明书.pdf, SPL-G1 Alignment Matrix.pdf
+├── docs/                           # ra_bus_protocol.md, BASELINE.md, EDA_ITERATION_DONE.md, EDA_ROADMAP.md, SPL-EDA 说明书.pdf, SPL-G1 Alignment Matrix.pdf
 ├── SPL-Core.json                   # ISA definition (v1.0.0-Commercial: SPL-TCU-G1)
 ├── State_Anchor.pdl                # 256-bit hardware identity anchor protocol
 ├── Materica-specification          # 4-item material causal mapping specification
