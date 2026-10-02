@@ -56,6 +56,16 @@ module spl_pim_compute_array #(
 
     assign cell_op = pim_op[4:0];
 
+    // ── Option-2: array-level shared wide multiplier ──
+    // All cells share ONE DATA_W×DATA_W multiplier. Only the cell selected by
+    // row_sel/col_sel (SCALAR mode) drives it; VECTOR/MATRIX wide-MUL requires
+    // sequencer serialization (not handled here).
+    logic [2*DATA_W-1:0] mac_res;
+    logic [DATA_W-1:0]   mac_a;
+    logic [DATA_W-1:0]   mac_b;
+    logic [DATA_W-1:0]   mac_a_g [ROWS-1:0][COLS-1:0];
+    logic [DATA_W-1:0]   mac_b_g [ROWS-1:0][COLS-1:0];
+
     // ── Row/col decode ──
     // Note: iverilog (vvp) does not support variable selects on unpacked
     // arrays in always_* processes. Use generate loops instead.
@@ -104,6 +114,12 @@ module spl_pim_compute_array #(
         for (r = 0; r < ROWS; r = r + 1) begin : gen_row
             for (c = 0; c < COLS; c = c + 1) begin : gen_col
                 wire pred_o;
+                wire [DATA_W-1:0] c_mul_a;
+                wire [DATA_W-1:0] c_mul_b;
+                wire              c_mul_req;
+                // Only the selected cell may drive the shared MAC.
+                assign mac_a_g[r][c] = (c_mul_req && row_sel[r] && col_sel[c]) ? c_mul_a : {DATA_W{1'b0}};
+                assign mac_b_g[r][c] = (c_mul_req && row_sel[r] && col_sel[c]) ? c_mul_b : {DATA_W{1'b0}};
                 spl_pim_cell #(.IDX_ROW(r), .IDX_COL(c), .DATA_W(DATA_W)) u_cell (
                     .ra_clk, .ra_rst_n,
                     .ra_op        (cell_op),
@@ -118,11 +134,32 @@ module spl_pim_compute_array #(
                     .pred_reg     (pred_o),
                     .exec_mode    (row_sel[r] && col_sel[c] ? exec_mode : 2'b00),
                     .p_tag_value  (raw_p_tag[r][c]),
-                    .q_tag_value  (raw_q_tag[r][c])
+                    .q_tag_value  (raw_q_tag[r][c]),
+                    .mul_a_o      (c_mul_a),
+                    .mul_b_o      (c_mul_b),
+                    .mul_req_o    (c_mul_req),
+                    .mul_res_i    (mac_res)
                 );
             end
         end
     endgenerate
+
+    // ── Shared-MAC operand reduction + single multiplier instance ──
+    always_comb begin
+        mac_a = {DATA_W{1'b0}};
+        mac_b = {DATA_W{1'b0}};
+        for (integer mi = 0; mi < ROWS; mi = mi + 1)
+            for (integer mj = 0; mj < COLS; mj = mj + 1) begin
+                mac_a = mac_a | mac_a_g[mi][mj];
+                mac_b = mac_b | mac_b_g[mi][mj];
+            end
+    end
+
+    spl_shared_mac #(.DATA_W(DATA_W)) u_shared_mac (
+        .a (mac_a),
+        .b (mac_b),
+        .p (mac_res)
+    );
 
     // ── Neighbour wiring (8-bit grid) ──
     generate

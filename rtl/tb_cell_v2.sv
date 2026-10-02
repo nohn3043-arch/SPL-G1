@@ -23,6 +23,9 @@ module tb_cell_v2;
     logic [ 1:0] mode;
     logic [ 7:0] p_tag, q_tag;
     logic        pred_reg;
+    logic [63:0]  mac_a, mac_b;
+    logic         mac_req;
+    logic [127:0] mac_res;
 
     spl_pim_cell #(.IDX_ROW(1), .IDX_COL(2)) dut (
         .ra_clk(clk), .ra_rst_n(rst_n),
@@ -32,8 +35,12 @@ module tb_cell_v2;
         .col_data_in(col_in), .col_data_out(col_out),
         .pred_en(pred_en), .pred_reg(pred_reg),
         .exec_mode(mode),
-        .p_tag_value(p_tag), .q_tag_value(q_tag)
+        .p_tag_value(p_tag), .q_tag_value(q_tag),
+        .mul_a_o(mac_a), .mul_b_o(mac_b), .mul_req_o(mac_req), .mul_res_i(mac_res)
     );
+
+    // Array-level shared MAC stand-in (option-2 architecture).
+    spl_shared_mac #(.DATA_W(64)) u_mac (.a(mac_a), .b(mac_b), .p(mac_res));
 
     always #5 clk = ~clk;
 

@@ -44,7 +44,13 @@ module spl_pim_cell #(
     // ── Mode & tags (unchanged from v1) ──
     input  logic [ 1:0] exec_mode,         // 00:IDLE 01:SCALAR 10:VECTOR 11:MATRIX
     output logic [ 7:0] p_tag_value,
-    output logic [ 7:0] q_tag_value
+    output logic [ 7:0] q_tag_value,
+
+    // ── Shared wide-multiplier interface (option-2: wide MUL moved out) ──
+    output logic [DATA_W-1:0]   mul_a_o,   // operand A (local_store)
+    output logic [DATA_W-1:0]   mul_b_o,   // operand B (ra_data_in)
+    output logic                mul_req_o, // 1 = this cell needs a wide multiply
+    input  logic [2*DATA_W-1:0] mul_res_i  // product from array-level shared MAC
 );
 
     // ═══════════════════════════════════════════════
@@ -146,11 +152,17 @@ module spl_pim_cell #(
     // ── Extended-precision intermediate signals ──
     logic [DATA_W:0] add_ext;        // (DATA_W+1)-bit: {carry, DATA_W-bit sum}
     logic [DATA_W:0] sub_ext;        // (DATA_W+1)-bit: {borrow, DATA_W-bit diff}
-    logic [2*DATA_W-1:0] mul_full;   // 2*DATA_W-bit full product
+    logic [2*DATA_W-1:0] mul_full;   // 2*DATA_W-bit full product (from shared MAC)
 
     assign add_ext = {1'b0, local_store} + {1'b0, ra_data_in} + {{DATA_W{1'b0}}, carry_reg};
     assign sub_ext = {1'b0, local_store} - {1'b0, ra_data_in} - {{DATA_W{1'b0}}, borrow_reg};
-    assign mul_full = local_store * ra_data_in;
+    // Option-2: no per-cell wide multiplier. Forward operands to the array-level
+    // shared MAC; the product returns combinationally on mul_res_i.
+    assign mul_a_o   = local_store;
+    assign mul_b_o   = ra_data_in;
+    assign mul_req_o = exec_active &&
+                       (ra_op == OP_MUL_LO || ra_op == OP_MUL_HI || ra_op == OP_MAC);
+    assign mul_full  = mul_res_i;
 
     // ═══════════════════════════════════════════════
     //  IEEE 754 FP16 CORE — replaces integer stubs
@@ -201,6 +213,7 @@ module spl_pim_cell #(
         logic        b_eff;           // effective operation sign
         logic [15:0] result;
         integer      diff;
+        integer      norm_i;
         begin
             // NaN check
             if (fp16_is_nan(a))    return a;
@@ -234,8 +247,12 @@ module spl_pim_cell #(
             if (mr == 12'd0) begin
                 return {sr, 15'd0};   // result = ±0
             end
-            while (mr[11] == 1'b0 && er > 0) begin
-                mr = mr << 1; er = er - 1;
+            // Fixed-iteration normalize (was: runtime-bounded while — not
+            // synthesizable). 12-bit mantissa needs at most 11 left shifts.
+            for (norm_i = 0; norm_i < 12; norm_i = norm_i + 1) begin
+                if (mr[11] == 1'b0 && er > 0) begin
+                    mr = mr << 1; er = er - 1;
+                end
             end
             // Round to nearest even (guard bit at mr[0])
             if (mr[0] && (mr[1] || (mr[10:1] != 10'd0)))
